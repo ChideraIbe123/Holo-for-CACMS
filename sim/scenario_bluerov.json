@@ -1,0 +1,60 @@
+{
+    "name": "bluerov_mavros_bridge",
+    "world": "SimpleUnderwater",
+    "package_name": "Ocean",
+    "main_agent": "auv0",
+    "ticks_per_sec": 200,
+    "frames_per_sec": false,
+    "agents": [
+        {
+            "agent_name": "auv0",
+            "agent_type": "BlueROV2",
+            "sensors": [
+                {
+                    "sensor_type": "IMUSensor",
+                    "sensor_name": "IMUSensor",
+                    "socket": "IMUSocket",
+                    "Hz": 10,
+                    "configuration": {
+                        "AccelSigma": [0.203, 0.104, 0.05],
+                        "AngVelSigma": [0.027, 0.024, 0.131],
+                        "ReturnBias": false
+                    }
+                },
+                {
+                    "sensor_type": "DVLSensor",
+                    "sensor_name": "DVLSensor",
+                    "socket": "DVLSocket",
+                    "Hz": 10,
+                    "configuration": {
+                        "Elevation": 22.5,
+                        "VelSigma": 0.017,
+                        "ReturnRange": true,
+                        "MaxRange": 50
+                    }
+                },
+                {
+                    "sensor_type": "DepthSensor",
+                    "sensor_name": "DepthSensor",
+                    "socket": "DepthSocket",
+                    "Hz": 3,
+                    "configuration": {
+                        "Sigma": 0.0098
+                    }
+                },
+                {
+                    "sensor_type": "DynamicsSensor",
+                    "sensor_name": "DynamicsSensor",
+                    "Hz": 50,
+                    "configuration": {
+                        "UseCOM": true,
+                        "UseRPY": false
+                    }
+                }
+            ],
+            "control_scheme": 0,
+            "location": [0, 0, -2],
+            "rotation": [0, 0, 0]
+        }
+    ]
+}
