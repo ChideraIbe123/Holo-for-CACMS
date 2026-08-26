@@ -111,6 +111,10 @@ Useful flags for `mavros_bridge.py`:
   with a comment saying where its value came from.
 - The pool footprint (25 m x 12 m) is an approximation; the depth and entry ramp are
   from the published CRCE specs.
+- **The physics engine puts slow bodies to sleep** and then ignores applied forces
+  (the vehicle can freeze mid-run after slowing for a turn). `pool_capture.py` has a
+  watchdog that wakes it with a tiny teleport; keep it if you write new control loops.
+  `pool_debug.py` is the no-camera diagnostic used to find this.
 - Vehicle drag/added-mass coefficients come from published system identification of
   the BlueROV2 (Wu 2018) plus a thrust calibration against our own pool recording.
   When the lab measures its own coefficients, they drop into

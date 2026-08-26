@@ -134,6 +134,7 @@ def main():
     model = BlueROV2StandardModel()
     ticks = float(scenario["ticks_per_sec"])
     chase, top, track = [], [], []
+    freeze_hist = []
     t, last_dyn = 0.0, None
     wp_state = {"i": 0}
 
@@ -148,6 +149,15 @@ def main():
                 nu_dot = model.step(cmd, quat, nu, z_world=float(last_dyn[8]),
                                     surface_z=WATER_SURFACE_Z)
                 env.act(AGENT_NAME, np.concatenate([R @ nu_dot[:3], R @ nu_dot[3:]]))
+                # physics-sleep watchdog: engine sleeps slow bodies and then
+                # ignores forces; a tiny teleport wakes it
+                pos = last_dyn[6:9]
+                freeze_hist.append(pos.copy())
+                if len(freeze_hist) > 100:
+                    freeze_hist.pop(0)
+                    if np.linalg.norm(pos - freeze_hist[0]) < 0.002 and np.abs(cmd[:4]).max() > 0.05:
+                        env.agents[AGENT_NAME].teleport(location=pos + np.array([0, 0, 0.003]))
+                        freeze_hist.clear()
             env.act("cam0", np.zeros(6))
             state = env.tick()
             t = float(state.get("t", t + 1.0 / ticks))
