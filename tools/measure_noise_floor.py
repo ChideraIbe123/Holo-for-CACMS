@@ -16,12 +16,13 @@ from geometry_msgs.msg import TwistStamped
 from std_msgs.msg import Float64
 
 # Real-vehicle targets (successive-diff floors from rosbag_20260504_154118)
+# Multi-bag means from the 5-bag holdout evaluation (May + March sessions)
 TARGET = {
-    'gyro (rad/s)': [0.027, 0.024, 0.131],
-    'accel (m/s^2)': [0.203, 0.104, 0.050],
+    'gyro (rad/s)': [0.027, 0.026, 0.120],
+    'accel (m/s^2)': [0.190, 0.150, 0.050],
     'rpy (deg)': [0.32, 0.34, 1.39],
-    'dvl vel (m/s)': [0.030, 0.032, 0.010],
-    'rel_alt (m)': [0.0098],
+    'dvl vel (m/s)': [0.026, 0.028, 0.010],
+    'rel_alt (m)': [0.012],
 }
 
 imu_rows, dvl_rows, alt_rows = [], [], []
