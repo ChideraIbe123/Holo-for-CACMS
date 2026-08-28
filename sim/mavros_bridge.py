@@ -89,6 +89,12 @@ GT_CHILD_FRAME_ID = 'base_link'
 NOISE_ENABLED = True
 ORIENTATION_NOISE_RPY_DEG = [0.32, 0.34, 1.39]   # DynamicsSensor is noiseless in-engine
 REL_ALT_QUANTIZATION = 0.001                     # m; real topic has 1 mm granularity
+ACCEL_LSB = 0.00980665                           # real accel is quantized at 1 milli-g
+# The real 10 Hz accel topic is a SAMPLE-AND-HOLD of a ~2 Hz internal update
+# (measured: 81% of consecutive samples identical, variance arrives in bursts).
+# Scenario AccelSigma is scaled up by 1/sqrt(P) so the successive-diff floor
+# still matches the real multi-bag floors.
+ACCEL_UPDATE_P = 0.19
 DVL_FOM_JITTER = True                            # fom ~ max(0, N(mean, std)) as in real bag
 DVL_FOM_STD = 0.00185
 
@@ -231,6 +237,11 @@ class MavrosBridge:
         msg.angular_velocity.y = float(gyro[1])
         msg.angular_velocity.z = float(gyro[2])
         msg.angular_velocity_covariance = _diag_to_cov9(ANGULAR_VELOCITY_COV_DIAG)
+        if NOISE_ENABLED:
+            # sample-and-hold: only take a fresh accel value with prob ACCEL_UPDATE_P
+            if not hasattr(self, "_held_accel") or np.random.rand() < ACCEL_UPDATE_P:
+                self._held_accel = np.round(accel / ACCEL_LSB) * ACCEL_LSB
+            accel = self._held_accel
         msg.linear_acceleration.x = float(accel[0])
         msg.linear_acceleration.y = float(accel[1])
         msg.linear_acceleration.z = float(accel[2])
@@ -281,6 +292,10 @@ def scripted_command(t):
     return cmd
 
 
+SCRIPT_CRUISE = 0.50   # overridable via --cruise
+SCRIPT_TURN = 0.44     # overridable via --turn
+
+
 def scripted_command6(t, z=None, w_vert=0.0, z_target=-2.5):
     """Scripted test motion, standard-BlueROV2 dynamics: 6 normalized T200
     commands [T1..T4 vectored, T5..T6 vertical], each in [-1, 1].
@@ -289,8 +304,8 @@ def scripted_command6(t, z=None, w_vert=0.0, z_target=-2.5):
     which the real vehicle uses) instead of open-loop trim."""
     cmd = np.zeros(6)
     if t >= 3.0:
-        cmd[0:4] = 0.50        # vectored: cruise (~1 m/s steady state)
-        cmd[[0, 2]] = 0.44     # slight asymmetry: slow yaw
+        cmd[0:4] = SCRIPT_CRUISE   # vectored cruise
+        cmd[[0, 2]] = SCRIPT_TURN  # asymmetry: yaw
     if z is None:
         cmd[4:6] = -0.45 if t < 3.0 else -0.105
     else:
@@ -306,14 +321,17 @@ def main():
     parser.add_argument('--duration', type=float, default=0.0, help='stop after N sim-seconds (0 = run forever)')
     parser.add_argument('--no-noise', action='store_true',
                         help='clean data: disables bridge-side noise AND zeroes scenario sensor sigmas')
+    parser.add_argument('--cruise', type=float, default=0.50, help='scripted cruise command')
+    parser.add_argument('--turn', type=float, default=0.44, help='scripted asymmetry command')
     parser.add_argument('--dynamics', choices=['standard', 'builtin'], default='standard',
                         help="'standard' = exact 6-thruster BlueROV2 Fossen model (default); "
                              "'builtin' = HoloOcean's 8-thruster Heavy dynamics")
     args = parser.parse_args()
 
-    global NOISE_ENABLED
+    global NOISE_ENABLED, SCRIPT_CRUISE, SCRIPT_TURN
     if args.no_noise:
         NOISE_ENABLED = False
+    SCRIPT_CRUISE, SCRIPT_TURN = args.cruise, args.turn
 
     rclpy.init()
     node = rclpy.create_node('holoocean_mavros_bridge')
