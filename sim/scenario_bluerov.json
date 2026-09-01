@@ -16,16 +16,8 @@
                     "socket": "IMUSocket",
                     "Hz": 10,
                     "configuration": {
-                        "AccelSigma": [
-                            0.44,
-                            0.34,
-                            0.115
-                        ],
-                        "AngVelSigma": [
-                            0.027,
-                            0.026,
-                            0.12
-                        ],
+                        "AccelSigma": 0.0,
+                        "AngVelSigma": 0.0,
                         "ReturnBias": false
                     }
                 },
@@ -36,7 +28,7 @@
                     "Hz": 10,
                     "configuration": {
                         "Elevation": 22.5,
-                        "VelSigma": 0.017,
+                        "VelSigma": 0.0,
                         "ReturnRange": true,
                         "MaxRange": 50
                     }

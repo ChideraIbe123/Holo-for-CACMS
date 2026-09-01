@@ -100,13 +100,17 @@ class BlueROV2StandardModel:
         self.M += np.diag(ADDED_MASS)
         self.M_inv = np.linalg.inv(self.M)
 
-        # Thruster mixing matrix: tau = T @ forces (6x6)
+        # Thruster mixing matrices: tau = T @ forces (6x6)
         self.T = np.zeros((6, 6))
+        self.T_ardusub = np.zeros((6, 6))
         for i in range(6):
             self.T[:3, i] = THRUSTER_DIR[i]
             self.T[3:, i] = np.cross(THRUSTER_POS[i], THRUSTER_DIR[i])
+            self.T_ardusub[:3, i] = ARDUSUB_DIR[i]
+            self.T_ardusub[3:, i] = np.cross(THRUSTER_POS[i], ARDUSUB_DIR[i])
 
-    def step(self, thruster_cmd, quat_xyzw, nu_body, z_world=-10.0, surface_z=0.0):
+    def step(self, thruster_cmd, quat_xyzw, nu_body, z_world=-10.0, surface_z=0.0,
+             mixer='script'):
         """Compute body accelerations for the current tick.
 
         Args:
@@ -121,7 +125,7 @@ class BlueROV2StandardModel:
         """
         nu = np.asarray(nu_body, dtype=float)
         forces = THRUST_SCALE * t200_force(thruster_cmd)
-        tau = self.T @ forces
+        tau = (self.T_ardusub if mixer == 'ardusub' else self.T) @ forces
 
         # Restoring forces: gravity & buoyancy rotated into body frame (FLU, z up).
         # Buoyancy tapers to zero as the hull breaches the surface (vehicle

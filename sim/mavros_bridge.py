@@ -87,6 +87,25 @@ GT_CHILD_FRAME_ID = 'base_link'
 #     scenario_bluerov.json; the values below cover what HoloOcean can't do.
 #     --no-noise disables BOTH (bridge zeroes the scenario sigmas on load). ---
 NOISE_ENABLED = True
+# Excitation-dependent noise: sigma(E) = a + b*E, E = mean |normalized thruster cmd|.
+# Fitted from 48 five-second windows across 5 real bags (fit_noise_model.py).
+# Applied in the bridge (engine sigmas are zeroed) so sigma can follow effort.
+NOISE_MODEL = {
+    'gyro_x': (0.00635, 0.13451),
+    'gyro_y': (0.02113, 0.03100),
+    'gyro_z': (0.04141, 0.48643),
+    'accel_x': (0.15382, 0.21025),
+    'accel_y': (0.09926, 0.14328),
+    'accel_z': (0.04064, 0.02536),
+    'dvl_x': (0.01983, 0.04191),
+    'dvl_y': (0.01757, 0.08603),
+    'dvl_z': (0.01061, 0.00000),
+}
+
+
+def noise_sigma(ch, effort):
+    a, b = NOISE_MODEL[ch]
+    return a + b * effort
 ORIENTATION_NOISE_RPY_DEG = [0.32, 0.34, 1.39]   # DynamicsSensor is noiseless in-engine
 REL_ALT_QUANTIZATION = 0.001                     # m; real topic has 1 mm granularity
 ACCEL_LSB = 0.00980665                           # real accel is quantized at 1 milli-g
@@ -175,6 +194,7 @@ class MavrosBridge:
         self.gt_pub = node.create_publisher(Odometry, GT_TOPIC, 10)
         self.last_quat_xyzw = np.array([0.0, 0.0, 0.0, 1.0])
         self.sim_time = 0.0
+        self.effort = 0.0      # mean |thruster cmd|, set by the main loop each tick
         self._gt_decim = 1     # publish GT every Nth dynamics sample
         self._gt_count = 0
 
@@ -212,6 +232,10 @@ class MavrosBridge:
     def on_imu(self, imu_data):
         accel = np.asarray(imu_data[0], dtype=float)   # body frame, m/s^2
         gyro = np.asarray(imu_data[1], dtype=float)    # body frame, rad/s
+        if NOISE_ENABLED:
+            E = self.effort
+            gyro = gyro + np.random.randn(3) * np.array(
+                [noise_sigma('gyro_x', E), noise_sigma('gyro_y', E), noise_sigma('gyro_z', E)]) / np.sqrt(2)
 
         if GRAVITY_MODE == 'flip_gravity':
             # convert HoloOcean's flipped gravity term to real-IMU convention
@@ -238,9 +262,13 @@ class MavrosBridge:
         msg.angular_velocity.z = float(gyro[2])
         msg.angular_velocity_covariance = _diag_to_cov9(ANGULAR_VELOCITY_COV_DIAG)
         if NOISE_ENABLED:
-            # sample-and-hold: only take a fresh accel value with prob ACCEL_UPDATE_P
+            # sample-and-hold: only take a fresh accel value with prob ACCEL_UPDATE_P;
+            # noise is drawn at update time, scaled so the 10 Hz diff-floor matches sigma(E)
             if not hasattr(self, "_held_accel") or np.random.rand() < ACCEL_UPDATE_P:
-                self._held_accel = np.round(accel / ACCEL_LSB) * ACCEL_LSB
+                E = self.effort
+                sig = np.array([noise_sigma('accel_x', E), noise_sigma('accel_y', E),
+                                noise_sigma('accel_z', E)]) / np.sqrt(2 * ACCEL_UPDATE_P)
+                self._held_accel = np.round((accel + np.random.randn(3) * sig) / ACCEL_LSB) * ACCEL_LSB
             accel = self._held_accel
         msg.linear_acceleration.x = float(accel[0])
         msg.linear_acceleration.y = float(accel[1])
@@ -252,6 +280,10 @@ class MavrosBridge:
         v = np.asarray(dvl_data, dtype=float)[:3]      # body-frame velocity, m/s
         if np.isnan(v).any():
             return
+        if NOISE_ENABLED:
+            E = self.effort
+            v = v + np.random.randn(3) * np.array(
+                [noise_sigma('dvl_x', E), noise_sigma('dvl_y', E), noise_sigma('dvl_z', E)]) / np.sqrt(2)
         msg = TwistStamped()
         msg.header.stamp = self._stamp()
         msg.header.frame_id = DVL_FRAME_ID
@@ -321,6 +353,9 @@ def main():
     parser.add_argument('--duration', type=float, default=0.0, help='stop after N sim-seconds (0 = run forever)')
     parser.add_argument('--no-noise', action='store_true',
                         help='clean data: disables bridge-side noise AND zeroes scenario sensor sigmas')
+    parser.add_argument('--replay', type=str, default=None,
+                        help='npz command profile from a real bag (extract_cmd_profile.py); '
+                             'replays real thruster commands instead of the scripted path')
     parser.add_argument('--cruise', type=float, default=0.50, help='scripted cruise command')
     parser.add_argument('--turn', type=float, default=0.44, help='scripted asymmetry command')
     parser.add_argument('--dynamics', choices=['standard', 'builtin'], default='standard',
@@ -370,6 +405,16 @@ def main():
 
     node.get_logger().info(f'Starting HoloOcean ({SCENARIO_JSON}), headless={args.headless}')
     import time as _time
+    replay = None
+    if args.replay:
+        rp = np.load(args.replay)
+        replay = {'t': rp['t'], 'cmd': rp['cmd'], 'z0': float(rp['z0'])}
+        for agent in scenario['agents']:
+            if agent['agent_name'] == AGENT_NAME:
+                agent['location'][2] = min(replay['z0'], -0.3)
+        print(f"[bridge] replaying real command profile: {args.replay} "
+              f"({len(replay['t'])} cmds, {replay['t'][-1]:.0f}s, spawn z {replay['z0']:.2f})")
+
     if model is not None:
         # DynamicsSensor captures every tick in standard mode; keep GT topic at 50 Hz
         bridge._gt_decim = max(1, int(ticks_per_sec / 50))
@@ -384,20 +429,28 @@ def main():
                     # exact standard-BlueROV2 dynamics: accelerations from our
                     # Fossen model, computed on the measured state, sent in world
                     # frame (same pattern as HoloOcean's fossen_interface)
-                    if args.move and last_dyn is not None:
+                    mixer = 'script'
+                    if replay is not None:
+                        idx = int(np.searchsorted(replay['t'], t, side='right')) - 1
+                        cmd6 = replay['cmd'][max(idx, 0)]
+                        mixer = 'ardusub'
+                        if t > replay['t'][-1]:
+                            break
+                    elif args.move and last_dyn is not None:
                         cmd6 = scripted_command6(t, z=float(last_dyn[8]),
                                                  w_vert=float(last_dyn[5]))
                     elif args.move:
                         cmd6 = scripted_command6(t)
                     else:
                         cmd6 = np.zeros(6)
+                    bridge.effort = float(np.mean(np.abs(cmd6)))
                     if last_dyn is not None:
                         quat = last_dyn[DYN_QUAT]
                         R = quat_to_rot_matrix_xyzw(quat)
                         nu = np.concatenate([R.T @ last_dyn[3:6], R.T @ last_dyn[12:15]])
                         nu_dot = model.step(cmd6, quat, nu,
                                             z_world=float(last_dyn[8]),
-                                            surface_z=WATER_SURFACE_Z)
+                                            surface_z=WATER_SURFACE_Z, mixer=mixer)
                         acc_world = np.concatenate([R @ nu_dot[:3], R @ nu_dot[3:]])
                         env.act(AGENT_NAME, acc_world)
                 elif args.move:

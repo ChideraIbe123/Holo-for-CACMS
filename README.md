@@ -29,6 +29,13 @@ Every part was checked against real data, not just built from specs:
 
 Full results with figures: [docs/BlueROV2_Simulation_Report.pdf](docs/BlueROV2_Simulation_Report.pdf)
 
+**Fidelity scorecard** — the twin is evaluated against a reference floor: sim data must be
+no further from a real recording than real recordings are from each other (statistical
+distances per sensor channel, Mann-Whitney test). Current: 17/31 channel-metrics pass;
+notably the accelerometer distribution is statistically indistinguishable from real after
+modeling the sensor's true behavior (2 Hz sample-and-hold, milli-g quantization, found by
+this scorecard). See [media/scorecard_v3.png](media/scorecard_v3.png).
+
 <p float="left">
   <img src="media/P1_pool_trajectory_and_depth.png" width="49%"/>
   <img src="media/2_model_vs_real_vehicle.png" width="44%"/>
