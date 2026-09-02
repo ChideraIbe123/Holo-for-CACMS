@@ -114,6 +114,9 @@ ACCEL_LSB = 0.00980665                           # real accel is quantized at 1 
 # Scenario AccelSigma is scaled up by 1/sqrt(P) so the successive-diff floor
 # still matches the real multi-bag floors.
 ACCEL_UPDATE_P = 0.19
+# HYBRID: constant per-axis accel sigmas (multi-bag means, the v3 config that passed
+# all accel metrics). Excitation model kept for gyros only (helped there).
+ACCEL_SIGMA_CONST = [0.19, 0.15, 0.05]
 DVL_FOM_JITTER = True                            # fom ~ max(0, N(mean, std)) as in real bag
 DVL_FOM_STD = 0.00185
 
@@ -262,12 +265,11 @@ class MavrosBridge:
         msg.angular_velocity.z = float(gyro[2])
         msg.angular_velocity_covariance = _diag_to_cov9(ANGULAR_VELOCITY_COV_DIAG)
         if NOISE_ENABLED:
-            # sample-and-hold: only take a fresh accel value with prob ACCEL_UPDATE_P;
-            # noise is drawn at update time, scaled so the 10 Hz diff-floor matches sigma(E)
+            # HYBRID: accels use CONSTANT multi-bag sigmas (v3 config beat the fitted
+            # excitation model on every accel metric) plus the sensor's real behavior
+            # (2 Hz sample-and-hold, milli-g quantization).
             if not hasattr(self, "_held_accel") or np.random.rand() < ACCEL_UPDATE_P:
-                E = self.effort
-                sig = np.array([noise_sigma('accel_x', E), noise_sigma('accel_y', E),
-                                noise_sigma('accel_z', E)]) / np.sqrt(2 * ACCEL_UPDATE_P)
+                sig = np.array(ACCEL_SIGMA_CONST) / np.sqrt(2 * ACCEL_UPDATE_P)
                 self._held_accel = np.round((accel + np.random.randn(3) * sig) / ACCEL_LSB) * ACCEL_LSB
             accel = self._held_accel
         msg.linear_acceleration.x = float(accel[0])
@@ -280,10 +282,9 @@ class MavrosBridge:
         v = np.asarray(dvl_data, dtype=float)[:3]      # body-frame velocity, m/s
         if np.isnan(v).any():
             return
-        if NOISE_ENABLED:
-            E = self.effort
-            v = v + np.random.randn(3) * np.array(
-                [noise_sigma('dvl_x', E), noise_sigma('dvl_y', E), noise_sigma('dvl_z', E)]) / np.sqrt(2)
+        # HYBRID: DVL noise comes from the engine's per-beam VelSigma (scenario),
+        # which reproduces the beam->xyz correlation structure better than the
+        # per-axis bridge noise did (dvl_z regressed with per-axis).
         msg = TwistStamped()
         msg.header.stamp = self._stamp()
         msg.header.frame_id = DVL_FRAME_ID
@@ -408,10 +409,12 @@ def main():
     replay = None
     if args.replay:
         rp = np.load(args.replay)
-        replay = {'t': rp['t'], 'cmd': rp['cmd'], 'z0': float(rp['z0'])}
+        replay = {'t': rp['t'], 'cmd': rp['cmd'], 'z0': float(rp['z0']), 'smooth': np.zeros(6)}
         for agent in scenario['agents']:
             if agent['agent_name'] == AGENT_NAME:
-                agent['location'][2] = min(replay['z0'], -0.3)
+                # HYBRID: clamp spawn depth so the vehicle stays submerged (surface
+                # bobbing wrecked the depth spectrum when profiles spawned at z0~-0.13)
+                agent['location'][2] = min(replay['z0'], -0.5)
         print(f"[bridge] replaying real command profile: {args.replay} "
               f"({len(replay['t'])} cmds, {replay['t'][-1]:.0f}s, spawn z {replay['z0']:.2f})")
 
@@ -432,7 +435,12 @@ def main():
                     mixer = 'script'
                     if replay is not None:
                         idx = int(np.searchsorted(replay['t'], t, side='right')) - 1
-                        cmd6 = replay['cmd'][max(idx, 0)]
+                        raw = replay['cmd'][max(idx, 0)]
+                        # HYBRID: ~1 s low-pass on the ZOH commands removes the 4 Hz
+                        # step artifact that made the DVL/thrust spectrum too steep
+                        alpha = 1.0 / (1.0 + 1.0 * ticks_per_sec)
+                        replay['smooth'] += alpha * (raw - replay['smooth'])
+                        cmd6 = replay['smooth']
                         mixer = 'ardusub'
                         if t > replay['t'][-1]:
                             break

@@ -28,7 +28,7 @@
                     "Hz": 10,
                     "configuration": {
                         "Elevation": 22.5,
-                        "VelSigma": 0.0,
+                        "VelSigma": 0.017,
                         "ReturnRange": true,
                         "MaxRange": 50
                     }
