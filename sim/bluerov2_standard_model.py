@@ -79,6 +79,19 @@ def t200_force(cmd):
     return (-140.3 * v**9 + 389.9 * v**7 - 404.1 * v**5 + 176.0 * v**3 + 8.9 * v)
 
 
+# ArduSub-convention thruster directions (FRD factors from AP_Motors6DOF.cpp,
+# converted to FLU: lateral flips sign; verticals push down for positive output).
+# Used when replaying real per-thruster PWM through the model.
+ARDUSUB_DIR = np.array([
+    [-0.7071, -0.7071, 0.0],
+    [-0.7071, 0.7071, 0.0],
+    [0.7071, -0.7071, 0.0],
+    [0.7071, 0.7071, 0.0],
+    [0.0, 0.0, -1.0],
+    [0.0, 0.0, -1.0],
+])
+
+
 class BlueROV2StandardModel:
     """Fossen dynamics: tau = thrusters + restoring; M*nu_dot = tau - C(nu)nu - D(nu)nu.
 
