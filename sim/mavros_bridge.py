@@ -92,7 +92,7 @@ NOISE_ENABLED = True
 # Applied in the bridge (engine sigmas are zeroed) so sigma can follow effort.
 NOISE_MODEL = {
     'gyro_x': (0.00635, 0.13451),
-    'gyro_y': (0.02113, 0.03100),  # reverted: distance ratio != direction; reduce was wrong way
+    'gyro_y': (0.02113, 0.03100),  # fitted value; amplitude scaling can't fix gyro_y (shape gap, like accel)
     'gyro_z': (0.04141, 0.48643),
     'accel_x': (0.15382, 0.21025),
     'accel_y': (0.09926, 0.14328),
