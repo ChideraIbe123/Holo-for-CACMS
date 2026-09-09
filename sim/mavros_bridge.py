@@ -92,7 +92,7 @@ NOISE_ENABLED = True
 # Applied in the bridge (engine sigmas are zeroed) so sigma can follow effort.
 NOISE_MODEL = {
     'gyro_x': (0.00635, 0.13451),
-    'gyro_y': (0.02113, 0.03100),
+    'gyro_y': (0.02113, 0.03100),  # reverted: distance ratio != direction; reduce was wrong way
     'gyro_z': (0.04141, 0.48643),
     'accel_x': (0.15382, 0.21025),
     'accel_y': (0.09926, 0.14328),
@@ -180,6 +180,22 @@ def quat_multiply_xyzw(a, b):
     ])
 
 
+# Colored (AR1) noise state per channel — real sensor noise rolls off at high
+# frequency; white noise puts too much power in the top of the band and fails the
+# spectral metric. AR1_A sets the corner (0=white, ->1 = heavier low-pass).
+AR1_A = 0.5
+_ar1_state = {}
+
+
+def colored(key, sigma):
+    """AR(1) low-pass noise with stationary std = sigma."""
+    prev = _ar1_state.get(key, 0.0)
+    innov = np.random.randn() * sigma * np.sqrt(1.0 - AR1_A * AR1_A)
+    val = AR1_A * prev + innov
+    _ar1_state[key] = val
+    return val
+
+
 def perturb_quat_xyzw(q):
     """Compose q with a small Gaussian RPY rotation (attitude-estimate noise)."""
     r, p, y = (np.random.randn(3) * np.radians(ORIENTATION_NOISE_RPY_DEG))
@@ -237,8 +253,10 @@ class MavrosBridge:
         gyro = np.asarray(imu_data[1], dtype=float)    # body frame, rad/s
         if NOISE_ENABLED:
             E = self.effort
-            gyro = gyro + np.random.randn(3) * np.array(
-                [noise_sigma('gyro_x', E), noise_sigma('gyro_y', E), noise_sigma('gyro_z', E)]) / np.sqrt(2)
+            gyro = gyro + np.array([
+                colored('gyro_x', noise_sigma('gyro_x', E)),
+                colored('gyro_y', noise_sigma('gyro_y', E)),
+                colored('gyro_z', noise_sigma('gyro_z', E))]) / np.sqrt(2)
 
         if GRAVITY_MODE == 'flip_gravity':
             # convert HoloOcean's flipped gravity term to real-IMU convention
@@ -282,9 +300,14 @@ class MavrosBridge:
         v = np.asarray(dvl_data, dtype=float)[:3]      # body-frame velocity, m/s
         if np.isnan(v).any():
             return
-        # HYBRID: DVL noise comes from the engine's per-beam VelSigma (scenario),
-        # which reproduces the beam->xyz correlation structure better than the
-        # per-axis bridge noise did (dvl_z regressed with per-axis).
+        # v7: colored per-axis DVL noise in the bridge (real DVL noise rolls off at
+        # high freq like the gyros; engine white noise failed the spectral metric).
+        if NOISE_ENABLED:
+            E = self.effort
+            v = v + np.array([
+                colored('dvl_x', noise_sigma('dvl_x', E)),
+                colored('dvl_y', noise_sigma('dvl_y', E)),
+                colored('dvl_z', noise_sigma('dvl_z', E))]) / np.sqrt(2)
         msg = TwistStamped()
         msg.header.stamp = self._stamp()
         msg.header.frame_id = DVL_FRAME_ID

@@ -53,11 +53,17 @@ def wasserstein1(a, b):
 
 
 def log_psd(x, fs):
-    """Welch-style averaged periodogram, log10."""
+    """Welch-style averaged periodogram, log10. Robust to short signals."""
+    x = np.asarray(x, dtype=float)
     seg = 128
     if len(x) < 2 * seg:
-        seg = max(32, len(x) // 4)
-    hops = range(0, len(x) - seg, seg // 2)
+        seg = max(16, len(x) // 4)
+    seg = min(seg, len(x))
+    if seg < 8:
+        return None
+    hops = list(range(0, len(x) - seg + 1, max(seg // 2, 1)))
+    if not hops:
+        hops = [0]
     w = np.hanning(seg)
     ps = [np.abs(np.fft.rfft((x[i:i + seg] - x[i:i + seg].mean()) * w)) ** 2 for i in hops]
     return np.log10(np.mean(ps, axis=0) + 1e-12)
@@ -65,6 +71,8 @@ def log_psd(x, fs):
 
 def spectral_dist(a, b, fs=10.0):
     pa, pb = log_psd(a, fs), log_psd(b, fs)
+    if pa is None or pb is None:
+        return None
     n = min(len(pa), len(pb))
     return float(np.sqrt(np.mean((pa[:n] - pb[:n]) ** 2)))
 
@@ -142,7 +150,9 @@ def pair_distances(runs_a, runs_b, exclude_same=False):
                 continue
             out[name]["ks"].append(ks_stat(da, db))
             out[name]["w1"].append(wasserstein1(da, db))
-            out[name]["spec"].append(spectral_dist(ra[key][:, col], rb[key][:, col]))
+            sd = spectral_dist(ra[key][:, col], rb[key][:, col])
+            if sd is not None:
+                out[name]["spec"].append(sd)
         fa, fb = window_features(ra), window_features(rb)
         if fa is not None and fb is not None and len(fa) > 2 and len(fb) > 2:
             out["_mmd"].append(mmd_rbf(fa, fb))
