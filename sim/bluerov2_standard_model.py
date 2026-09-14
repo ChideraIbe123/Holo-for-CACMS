@@ -123,7 +123,7 @@ class BlueROV2StandardModel:
             self.T_ardusub[3:, i] = np.cross(THRUSTER_POS[i], ARDUSUB_DIR[i])
 
     def step(self, thruster_cmd, quat_xyzw, nu_body, z_world=-10.0, surface_z=0.0,
-             mixer='script'):
+             mixer='script', tau_ext=None):
         """Compute body accelerations for the current tick.
 
         Args:
@@ -137,8 +137,14 @@ class BlueROV2StandardModel:
             nu_dot: 6-vector of body accelerations [lin(3), ang(3)]
         """
         nu = np.asarray(nu_body, dtype=float)
-        forces = THRUST_SCALE * t200_force(thruster_cmd)
-        tau = (self.T_ardusub if mixer == 'ardusub' else self.T) @ forces
+        if tau_ext is not None:
+            # closed-loop control: body-force setpoint from the velocity autopilot,
+            # bypassing the thruster polynomial (the autopilot produces whatever
+            # force it needs, within the saturation the caller applied)
+            tau = np.asarray(tau_ext, dtype=float).copy()
+        else:
+            forces = THRUST_SCALE * t200_force(thruster_cmd)
+            tau = (self.T_ardusub if mixer == 'ardusub' else self.T) @ forces
 
         # Restoring forces: gravity & buoyancy rotated into body frame (FLU, z up).
         # Buoyancy tapers to zero as the hull breaches the surface (vehicle

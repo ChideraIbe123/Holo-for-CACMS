@@ -27,6 +27,13 @@ Every part was checked against real data, not just built from specs:
 | Pool | CRCE specs: 4 ft depth, zero-entry ramp (footprint approximated, not published) | height above floor: sim 0.58 m vs real 0.57 m |
 | End to end | Lab dead-reckoning code, unchanged, on sim data | ~3% drift, same as on real data |
 
+**Closed-loop control** — a controller can fly the sim vehicle using the lab's
+dead-reckoning estimate as feedback (`mavros_bridge.py --control` runs an inner velocity
+autopilot; a controller publishes `TwistStamped` to `/cmd_vel`, subscribing to
+`/deadreckon/odom`). `waypoint_controller.py` is a reference example; the lab's
+ANFIS-DDPG/fuzzy/PPO controllers plug in the same way. See
+[media/closedloop_square.png](media/closedloop_square.png) and `scripts/run_closedloop_test.sh`.
+
 Full results with figures: [docs/BlueROV2_Simulation_Report.pdf](docs/BlueROV2_Simulation_Report.pdf)
 
 **Fidelity scorecard** — the twin is evaluated against a reference floor: sim data must be

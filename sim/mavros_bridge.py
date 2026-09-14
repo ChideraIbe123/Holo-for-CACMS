@@ -126,6 +126,18 @@ DVL_FOM_STD = 0.00185
 # 'wall' -> stamp from the node clock (matches the real vehicle; requires the sim
 #           to run at real-time; needed if st_car_ekf mode is ever used, since it
 #           mixes message stamps with wall-clock now())
+# --- Closed-loop control (velocity autopilot) ---
+# When --control is set, the bridge subscribes to a TwistStamped velocity setpoint
+# (surge=linear.x, sway=linear.y, heave=linear.z, yaw_rate=angular.z) and runs an
+# inner P velocity loop -> body-force setpoint, emulating ArduSub's velocity mode.
+# This lets an external controller drive the sim vehicle closed-loop.
+CONTROL_TOPIC = '/cmd_vel'
+CTRL_KP_LIN = 60.0        # N per (m/s) surge/sway error
+CTRL_KP_Z = 80.0          # N per (m/s) heave error
+CTRL_KP_YAW = 20.0        # N*m per (rad/s) yaw-rate error
+CTRL_TAU_MAX = np.array([90.0, 90.0, 120.0, 0.0, 0.0, 22.0])  # BlueROV2 axis force/torque limits
+CTRL_TIMEOUT = 1.0        # s; zero the command if no setpoint arrives
+
 STAMP_SOURCE = 'sim'
 REAL_TIME_PACE = True               # sleep each tick so sim time tracks wall time
 
@@ -211,11 +223,29 @@ class MavrosBridge:
         self.vel_valid_pub = node.create_publisher(Bool, VELOCITY_VALID_TOPIC, 10)
         self.fom_pub = node.create_publisher(Float32, FOM_TOPIC, 10)
         self.gt_pub = node.create_publisher(Odometry, GT_TOPIC, 10)
+        self.cmd_vel = np.zeros(4)   # [surge, sway, heave, yaw_rate] desired
+        self.cmd_time = -1e9
+        node.create_subscription(TwistStamped, CONTROL_TOPIC, self._on_cmd_vel, 10)
         self.last_quat_xyzw = np.array([0.0, 0.0, 0.0, 1.0])
         self.sim_time = 0.0
         self.effort = 0.0      # mean |thruster cmd|, set by the main loop each tick
         self._gt_decim = 1     # publish GT every Nth dynamics sample
         self._gt_count = 0
+
+    def _on_cmd_vel(self, msg):
+        self.cmd_vel = np.array([msg.twist.linear.x, msg.twist.linear.y,
+                                 msg.twist.linear.z, msg.twist.angular.z])
+        self.cmd_time = self.sim_time
+
+    def autopilot_tau(self, nu):
+        """Inner P velocity loop: desired body velocity -> body-force setpoint."""
+        des = self.cmd_vel if (self.sim_time - self.cmd_time) < CTRL_TIMEOUT else np.zeros(4)
+        tau = np.zeros(6)
+        tau[0] = CTRL_KP_LIN * (des[0] - nu[0])
+        tau[1] = CTRL_KP_LIN * (des[1] - nu[1])
+        tau[2] = CTRL_KP_Z * (des[2] - nu[2])
+        tau[5] = CTRL_KP_YAW * (des[3] - nu[5])
+        return np.clip(tau, -CTRL_TAU_MAX, CTRL_TAU_MAX)
 
     def _stamp(self):
         if STAMP_SOURCE == 'sim':
@@ -377,6 +407,9 @@ def main():
     parser.add_argument('--duration', type=float, default=0.0, help='stop after N sim-seconds (0 = run forever)')
     parser.add_argument('--no-noise', action='store_true',
                         help='clean data: disables bridge-side noise AND zeroes scenario sensor sigmas')
+    parser.add_argument('--control', action='store_true',
+                        help='closed-loop: drive the vehicle from /cmd_vel velocity setpoints '
+                             '(external controller closes the loop via /deadreckon/odom)')
     parser.add_argument('--replay', type=str, default=None,
                         help='npz command profile from a real bag (extract_cmd_profile.py); '
                              'replays real thruster commands instead of the scripted path')
@@ -456,7 +489,15 @@ def main():
                     # Fossen model, computed on the measured state, sent in world
                     # frame (same pattern as HoloOcean's fossen_interface)
                     mixer = 'script'
-                    if replay is not None:
+                    tau_ext = None
+                    if args.control:
+                        cmd6 = np.zeros(6)   # thruster path unused in control mode
+                        if last_dyn is not None:
+                            q = last_dyn[DYN_QUAT]
+                            Rc = quat_to_rot_matrix_xyzw(q)
+                            nu_meas = np.concatenate([Rc.T @ last_dyn[3:6], Rc.T @ last_dyn[12:15]])
+                            tau_ext = bridge.autopilot_tau(nu_meas)
+                    elif replay is not None:
                         idx = int(np.searchsorted(replay['t'], t, side='right')) - 1
                         raw = replay['cmd'][max(idx, 0)]
                         # HYBRID: ~1 s low-pass on the ZOH commands removes the 4 Hz
@@ -481,11 +522,13 @@ def main():
                         nu = np.concatenate([R.T @ last_dyn[3:6], R.T @ last_dyn[12:15]])
                         nu_dot = model.step(cmd6, quat, nu,
                                             z_world=float(last_dyn[8]),
-                                            surface_z=WATER_SURFACE_Z, mixer=mixer)
+                                            surface_z=WATER_SURFACE_Z, mixer=mixer,
+                                            tau_ext=tau_ext)
                         acc_world = np.concatenate([R @ nu_dot[:3], R @ nu_dot[3:]])
                         env.act(AGENT_NAME, acc_world)
                 elif args.move:
                     env.act(AGENT_NAME, scripted_command(t))
+                rclpy.spin_once(node, timeout_sec=0.0)   # process incoming /cmd_vel
                 state = env.tick()
                 t = float(state.get('t', t + 1.0 / ticks_per_sec))
                 bridge.sim_time = t
