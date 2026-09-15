@@ -11,7 +11,13 @@ PY=~/projects/holoocean-env/bin/python
 DUR=90
 
 # name : law : kp_yaw : kd_yaw : cruise
+# All controllers use yaw-sign -1: the real vehicle's yaw command/response is
+# inverted (teleop-data finding, corr -0.73), and a direct closed-loop test
+# confirmed the sim velocity-setpoint path needs the same flip to track (with
+# +1 the vehicle diverged to -7 m; with -1 it tracks the square). YAW_SIGN below.
+YAW_SIGN=-1
 CONTROLLERS=(
+  "smc_vonbenzon:smc:0:0:0.30"
   "tight_pd:pd:1.6:0.8:0.30"
   "pursuit:pursuit:1.4:0.0:0.32"
   "p_baseline:p:1.4:0.0:0.30"
@@ -30,7 +36,7 @@ run_one () {
   local DR=$!
   sleep 4
   $PY waypoint_controller.py --name $name --law $law --kp-yaw $kp --kd-yaw $kd --cruise $cruise \
-    > $OUT/${tag}_ctrl.log 2>&1 &
+    --yaw-sign $YAW_SIGN > $OUT/${tag}_ctrl.log 2>&1 &
   local CT=$!
   $PY sim_traj_recorder.py $OUT/$tag > $OUT/${tag}_rec.log 2>&1 &
   local RC=$!

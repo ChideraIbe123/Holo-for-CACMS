@@ -60,9 +60,21 @@ class Ctrl:
         d_err = err - self.prev_err
         self.prev_err = err
 
-        yaw_cmd = self.a.kp_yaw * err
-        if self.a.law == 'pd':
-            yaw_cmd += self.a.kd_yaw * d_err
+        if self.a.law == 'smc':
+            # Boundary-layer sliding-mode heading law, structured after von Benzon
+            # 2022 (JMSE 10, 1898) sec 7.1: sliding surface s = e + lambda*de,
+            # reaching law C0*s plus a boundary-layer switching term
+            # alpha*tanh(s/eps_s) (their eps_s = boundary-layer thickness, Table 6
+            # Yaw row alpha=0.1, C0=2, eps_s=0.1). Adapted to the velocity-setpoint
+            # interface used by every benchmark controller (outputs a yaw-rate, not
+            # a torque), so it is comparable to the P/PD/pursuit controllers.
+            s = err + self.a.smc_lambda * d_err
+            yaw_cmd = self.a.smc_c0 * s + self.a.smc_alpha * math.tanh(s / self.a.smc_eps)
+        else:
+            yaw_cmd = self.a.kp_yaw * err
+            if self.a.law == 'pd':
+                yaw_cmd += self.a.kd_yaw * d_err
+        yaw_cmd *= self.a.yaw_sign   # control-path heading convention (see benchmark notes)
 
         cmd = TwistStamped()
         cmd.header.stamp = self.node.get_clock().now().to_msg()
@@ -78,7 +90,14 @@ def main():
     ap.add_argument('--kp-yaw', type=float, default=1.5)
     ap.add_argument('--kd-yaw', type=float, default=0.0)
     ap.add_argument('--cruise', type=float, default=0.3)
-    ap.add_argument('--law', choices=['p', 'pd', 'pursuit'], default='p')
+    ap.add_argument('--law', choices=['p', 'pd', 'pursuit', 'smc'], default='p')
+    ap.add_argument('--yaw-sign', type=float, default=1.0,
+                    help='control-path heading convention (+1 or -1)')
+    # SMC baseline (von Benzon 2022 sec 7.1 / Table 6 Yaw-row defaults)
+    ap.add_argument('--smc-c0', type=float, default=2.0)
+    ap.add_argument('--smc-alpha', type=float, default=0.1)
+    ap.add_argument('--smc-eps', type=float, default=0.1)
+    ap.add_argument('--smc-lambda', type=float, default=0.5)
     a = ap.parse_args()
     rclpy.init()
     node = rclpy.create_node('waypoint_controller')
