@@ -92,6 +92,15 @@ ARDUSUB_DIR = np.array([
 ])
 
 
+# Effective per-axis sign of the REAL vehicle's command->motion mapping, recovered
+# from data (infer_signs_teleop.py on the March obstacle/river bags, which have rich
+# sway+yaw): surge +, sway +, YAW INVERTED (teleop yaw cmd vs gyro_z: -0.73, all bags,
+# ~5% sign agreement). Applied to the replay (ardusub-mixed) tau so replayed real
+# commands turn the way the real vehicle turned. Root cause (wiring vs yaw convention)
+# is unresolved but irrelevant to matching the mapping.
+EFFECTIVE_SIGN = np.array([1.0, 1.0, 1.0, 1.0, 1.0, -1.0])  # surge,sway,heave,roll,pitch,yaw
+
+
 class BlueROV2StandardModel:
     """Fossen dynamics: tau = thrusters + restoring; M*nu_dot = tau - C(nu)nu - D(nu)nu.
 
@@ -145,6 +154,9 @@ class BlueROV2StandardModel:
         else:
             forces = THRUST_SCALE * t200_force(thruster_cmd)
             tau = (self.T_ardusub if mixer == 'ardusub' else self.T) @ forces
+            # NOTE: raw-PWM replay can't reproduce yaw (geometric mixer is degenerate
+            # for yaw vs ArduSub's real mixing; verify_yaw_fix.py -> ~0 corr). The
+            # yaw-sign finding is applied in the CONTROL path instead (bridge autopilot).
 
         # Restoring forces: gravity & buoyancy rotated into body frame (FLU, z up).
         # Buoyancy tapers to zero as the hull breaches the surface (vehicle

@@ -135,6 +135,14 @@ CONTROL_TOPIC = '/cmd_vel'
 CTRL_KP_LIN = 60.0        # N per (m/s) surge/sway error
 CTRL_KP_Z = 80.0          # N per (m/s) heave error
 CTRL_KP_YAW = 20.0        # N*m per (rad/s) yaw-rate error
+# Yaw sign: the sim is internally SELF-CONSISTENT (the closed-loop square test tracks
+# using DR feedback), so default +1. Data finding: the real vehicle's JOYSTICK yaw is
+# inverted vs its gyro (infer_signs_teleop.py, obstacle bags, -0.73 all runs) — but that
+# is the manual-control path, NOT the MAVROS velocity-setpoint path the benchmark
+# controllers use, which no existing bag exercises. So whether the benchmark control
+# path needs -1 is a precisely-scoped open question needing a velocity-setpoint bag or
+# the QGC MOT_*_DIRECTION param. Flip to -1 once that's known.
+YAW_CMD_SIGN = 1.0
 CTRL_TAU_MAX = np.array([90.0, 90.0, 120.0, 0.0, 0.0, 22.0])  # BlueROV2 axis force/torque limits
 CTRL_TIMEOUT = 1.0        # s; zero the command if no setpoint arrives
 
@@ -244,7 +252,7 @@ class MavrosBridge:
         tau[0] = CTRL_KP_LIN * (des[0] - nu[0])
         tau[1] = CTRL_KP_LIN * (des[1] - nu[1])
         tau[2] = CTRL_KP_Z * (des[2] - nu[2])
-        tau[5] = CTRL_KP_YAW * (des[3] - nu[5])
+        tau[5] = YAW_CMD_SIGN * CTRL_KP_YAW * (des[3] - YAW_CMD_SIGN * nu[5])
         return np.clip(tau, -CTRL_TAU_MAX, CTRL_TAU_MAX)
 
     def _stamp(self):
