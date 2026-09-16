@@ -111,6 +111,28 @@ def mmd_rbf(X, Y):
     return float(kxx + kyy - 2 * kxy)
 
 
+def acf_profile(d, nlags=10):
+    """Autocorrelation of an increment series at lags 1..nlags."""
+    d = np.asarray(d, float) - np.mean(d)
+    v = np.dot(d, d) + 1e-30
+    n = len(d)
+    if n < nlags + 5:
+        return None
+    return np.array([np.dot(d[:-k], d[k:]) / v for k in range(1, nlags + 1)])
+
+
+def acf_dist(da, db):
+    """L2 distance between increment ACF profiles — the ORDER-aware metric.
+    (Time-shuffled data keeps KS/W1 identical but zeroes the ACF; real gyro has
+    lag-1 +0.7 vs AR1-noise -0.25 — this metric sees what amplitude tuning
+    cannot. Added after the threshold calibration study showed every criterion
+    was near-blind to a shuffle control.)"""
+    pa, pb = acf_profile(da), acf_profile(db)
+    if pa is None or pb is None:
+        return None
+    return float(np.sqrt(np.mean((pa - pb) ** 2)))
+
+
 def mannwhitney_p(a, b):
     """Two-sided Mann-Whitney U via normal approximation."""
     a, b = np.asarray(a), np.asarray(b)
@@ -138,7 +160,7 @@ def mannwhitney_p(a, b):
 
 def pair_distances(runs_a, runs_b, exclude_same=False):
     """All cross distances between two run sets, per channel per metric."""
-    out = {name: {"ks": [], "w1": [], "spec": []} for name, _, _ in CHANNELS}
+    out = {name: {"ks": [], "w1": [], "spec": [], "acf": []} for name, _, _ in CHANNELS}
     out["_mmd"] = []
     pairs = [(i, j) for i in range(len(runs_a)) for j in range(len(runs_b))
              if not (exclude_same and i >= j)]
@@ -153,6 +175,9 @@ def pair_distances(runs_a, runs_b, exclude_same=False):
             sd = spectral_dist(ra[key][:, col], rb[key][:, col])
             if sd is not None:
                 out[name]["spec"].append(sd)
+            ad = acf_dist(da, db)
+            if ad is not None:
+                out[name]["acf"].append(ad)
         fa, fb = window_features(ra), window_features(rb)
         if fa is not None and fb is not None and len(fa) > 2 and len(fb) > 2:
             out["_mmd"].append(mmd_rbf(fa, fb))
@@ -173,29 +198,53 @@ def main():
     rr = pair_distances(real, real, exclude_same=True)   # reference floor
     sr = pair_distances(sim, real)                        # twin vs reality
 
-    report = {}
-    print(f"\n{'channel':<10}{'metric':<6}{'real-real med':>14}{'sim-real med':>14}{'ratio':>7}{'p(MWU)':>8}  verdict")
-    passes = total = 0
-    for name, _, _ in CHANNELS:
-        for metric in ("ks", "w1", "spec"):
-            a, b = rr[name][metric], sr[name][metric]
-            if not a or not b:
-                continue
-            med_a, med_b = float(np.median(a)), float(np.median(b))
-            p = mannwhitney_p(a, b)
-            ok = (p > 0.05) or (med_b <= med_a)
-            passes += ok; total += 1
-            report[f"{name}.{metric}"] = {"real_real_med": med_a, "sim_real_med": med_b, "p": p, "pass": bool(ok)}
-            print(f"{name:<10}{metric:<6}{med_a:>14.4g}{med_b:>14.4g}{med_b/max(med_a,1e-12):>7.2f}{p:>8.3f}  {'PASS' if ok else 'FAIL'}")
-    if rr["_mmd"] and sr["_mmd"]:
-        med_a, med_b = float(np.median(rr["_mmd"])), float(np.median(sr["_mmd"]))
-        p = mannwhitney_p(rr["_mmd"], sr["_mmd"])
-        ok = (p > 0.05) or (med_b <= med_a)
-        passes += ok; total += 1
-        report["window_mmd"] = {"real_real_med": med_a, "sim_real_med": med_b, "p": p, "pass": bool(ok)}
-        print(f"{'windows':<10}{'mmd':<6}{med_a:>14.4g}{med_b:>14.4g}{med_b/max(med_a,1e-12):>7.2f}{p:>8.3f}  {'PASS' if ok else 'FAIL'}")
+    # CONFORMAL margins (leave-one-out over the real set): margin = alpha-quantile
+    # of each held-out real bag's median distance to the rest. Calibrated ruler:
+    # a genuine real run passes ~alpha of the time (threshold_study.py: real-fail
+    # 5.5% vs MWU's 18% miscalibration). MWU kept as a secondary column.
+    ALPHA = 0.95
+    loo = {}
+    for i in range(len(real)):
+        rest = real[:i] + real[i + 1:]
+        d = pair_distances([real[i]], rest)
+        for name, _, _ in CHANNELS:
+            for metric in ("ks", "w1", "spec", "acf"):
+                if d[name][metric]:
+                    loo.setdefault(f"{name}.{metric}", []).append(float(np.median(d[name][metric])))
+        if d["_mmd"]:
+            loo.setdefault("window_mmd", []).append(float(np.median(d["_mmd"])))
+    margins = {k: float(np.quantile(v, ALPHA)) for k, v in loo.items() if len(v) >= 5}
 
-    print(f"\nSCORE: {passes}/{total} channel-metrics pass the reference-floor criterion")
+    report = {}
+    print(f"\n{'channel':<10}{'metric':<6}{'real-real med':>14}{'sim-real med':>14}"
+          f"{'ratio':>7}{'margin':>10}{'conf':>6}{'p(MWU)':>8}{'mwu':>5}")
+    conf_pass = mwu_pass = total = 0
+
+    def judge(key, a, b):
+        nonlocal conf_pass, mwu_pass, total
+        med_a, med_b = float(np.median(a)), float(np.median(b))
+        p = mannwhitney_p(a, b)
+        ok_mwu = (p > 0.05) or (med_b <= med_a)
+        margin = margins.get(key)
+        ok_conf = (med_b <= margin) if margin is not None else ok_mwu
+        conf_pass += ok_conf; mwu_pass += ok_mwu; total += 1
+        report[key] = {"real_real_med": med_a, "sim_real_med": med_b, "p": p,
+                       "margin": margin, "pass": bool(ok_conf), "pass_mwu": bool(ok_mwu)}
+        ch, met = key.rsplit(".", 1) if "." in key else (key, "")
+        print(f"{ch:<10}{met:<6}{med_a:>14.4g}{med_b:>14.4g}"
+              f"{med_b / max(med_a, 1e-12):>7.2f}{margin if margin is not None else float('nan'):>10.4g}"
+              f"{'PASS' if ok_conf else 'FAIL':>6}{p:>8.3f}{'P' if ok_mwu else 'F':>5}")
+
+    for name, _, _ in CHANNELS:
+        for metric in ("ks", "w1", "spec", "acf"):
+            a, b = rr[name][metric], sr[name][metric]
+            if a and b:
+                judge(f"{name}.{metric}", a, b)
+    if rr["_mmd"] and sr["_mmd"]:
+        judge("window_mmd", rr["_mmd"], sr["_mmd"])
+
+    print(f"\nSCORE (conformal, alpha={ALPHA}): {conf_pass}/{total}   "
+          f"[secondary MWU: {mwu_pass}/{total}]")
     with open(args.out + ".json", "w") as f:
         json.dump(report, f, indent=2)
     print(f"wrote {args.out}.json")

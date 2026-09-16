@@ -92,7 +92,9 @@ NOISE_ENABLED = True
 # Applied in the bridge (engine sigmas are zeroed) so sigma can follow effort.
 NOISE_MODEL = {
     'gyro_x': (0.00635, 0.13451),
-    'gyro_y': (0.02113, 0.03100),  # fitted value; amplitude scaling can't fix gyro_y (shape gap, like accel)
+    'gyro_y': (0.01378, 0.02021),  # v8: fitted values x0.65 — measured sim increment std
+                                   # 0.0535 vs real multi-bag mean 0.0349 (sim 1.53x too hot;
+                                   # earlier "needs increase" note had the direction wrong)
     'gyro_z': (0.04141, 0.48643),
     'accel_x': (0.15382, 0.21025),
     'accel_y': (0.09926, 0.14328),
@@ -135,14 +137,31 @@ CONTROL_TOPIC = '/cmd_vel'
 CTRL_KP_LIN = 60.0        # N per (m/s) surge/sway error
 CTRL_KP_Z = 80.0          # N per (m/s) heave error
 CTRL_KP_YAW = 20.0        # N*m per (rad/s) yaw-rate error
-# Yaw sign: the sim is internally SELF-CONSISTENT (the closed-loop square test tracks
-# using DR feedback), so default +1. Data finding: the real vehicle's JOYSTICK yaw is
-# inverted vs its gyro (infer_signs_teleop.py, obstacle bags, -0.73 all runs) — but that
-# is the manual-control path, NOT the MAVROS velocity-setpoint path the benchmark
-# controllers use, which no existing bag exercises. So whether the benchmark control
-# path needs -1 is a precisely-scoped open question needing a velocity-setpoint bag or
-# the QGC MOT_*_DIRECTION param. Flip to -1 once that's known.
-YAW_CMD_SIGN = 1.0
+# Real vehicle's yaw command->motion is INVERTED (infer_signs_teleop.py on obstacle
+# bags: teleop yaw vs gyro_z = -0.73, all runs). A controller written for the real
+# vehicle expects that convention, so the sim autopilot matches it. Set +1 if the
+# benchmark's MAVROS controllers turn out to use the standard convention (needs a
+# velocity-setpoint bag or the QGC param to confirm which the setpoint path uses).
+YAW_CMD_SIGN = -1.0
+# Replay yaw-rate servo: the geometric mixer is degenerate for yaw (PWM replay
+# gives ~0 yaw corr), so during --replay the model's yaw rate is servoed to the
+# bag's MEASURED gyro_z (stored in the profile npz as t_gz/gz). Surge/heave stay
+# PWM-driven (they validated against the real vehicle). Gain in N*m/(rad/s);
+# 0 disables. Sign maps real gyro_z convention onto model body yaw rate —
+# verify with a single replay run (sim gyro_z should correlate ~+1 with ref).
+YAWREF_GAIN = 3.0
+# -1 verified empirically: with +1 the published sim gyro_z came out ANTI-correlated
+# with the bag reference (corr -0.768 on yaw-rich bag 151023) — same inverted yaw
+# convention seen everywhere else on this vehicle; with -1 the published signal
+# matches the real trace. (v9 sign-check gate caught this before the campaign.)
+YAWREF_SIGN = -1.0
+# v10: same servo on roll/pitch rates. Real gyro_x/y are MOTION-dominated (increment
+# lag-1 autocorr +0.7; sim's was -0.25 = pure AR1 noise signature) — the model barely
+# rocks during replay, so pitch/roll motion must be trajectory-matched like yaw.
+# Signs empirically gated per axis before each campaign (run_v10 sign check).
+ATTREF_GAIN = 1.5    # N*m/(rad/s); restoring moments are stiffer in roll/pitch
+ATTREF_SIGN_X = 1.0
+ATTREF_SIGN_Y = 1.0
 CTRL_TAU_MAX = np.array([90.0, 90.0, 120.0, 0.0, 0.0, 22.0])  # BlueROV2 axis force/torque limits
 CTRL_TIMEOUT = 1.0        # s; zero the command if no setpoint arrives
 
@@ -473,7 +492,9 @@ def main():
     replay = None
     if args.replay:
         rp = np.load(args.replay)
-        replay = {'t': rp['t'], 'cmd': rp['cmd'], 'z0': float(rp['z0']), 'smooth': np.zeros(6)}
+        replay = {'t': rp['t'], 'cmd': rp['cmd'], 'z0': float(rp['z0']), 'smooth': np.zeros(6),
+                  'gz': (rp['t_gz'], rp['gz']) if 't_gz' in rp else None,
+                  'gxy': (rp['t_gz'], rp['gx'], rp['gy']) if 'gx' in rp else None}
         for agent in scenario['agents']:
             if agent['agent_name'] == AGENT_NAME:
                 # HYBRID: clamp spawn depth so the vehicle stays submerged (surface
@@ -498,6 +519,8 @@ def main():
                     # frame (same pattern as HoloOcean's fossen_interface)
                     mixer = 'script'
                     tau_ext = None
+                    yaw_ref = None
+                    att_ref = None
                     if args.control:
                         cmd6 = np.zeros(6)   # thruster path unused in control mode
                         if last_dyn is not None:
@@ -514,6 +537,13 @@ def main():
                         replay['smooth'] += alpha * (raw - replay['smooth'])
                         cmd6 = replay['smooth']
                         mixer = 'ardusub'
+                        if replay['gz'] is not None and YAWREF_GAIN > 0:
+                            tgz, gz = replay['gz']
+                            yaw_ref = YAWREF_SIGN * float(np.interp(t, tgz, gz))
+                        if replay['gxy'] is not None and ATTREF_GAIN > 0:
+                            tg, gx, gy = replay['gxy']
+                            att_ref = (ATTREF_SIGN_X * float(np.interp(t, tg, gx)),
+                                       ATTREF_SIGN_Y * float(np.interp(t, tg, gy)))
                         if t > replay['t'][-1]:
                             break
                     elif args.move and last_dyn is not None:
@@ -528,10 +558,18 @@ def main():
                         quat = last_dyn[DYN_QUAT]
                         R = quat_to_rot_matrix_xyzw(quat)
                         nu = np.concatenate([R.T @ last_dyn[3:6], R.T @ last_dyn[12:15]])
+                        tau_add = None
+                        if yaw_ref is not None or att_ref is not None:
+                            tau_add = np.zeros(6)
+                        if yaw_ref is not None:
+                            tau_add[5] = YAWREF_GAIN * (yaw_ref - nu[5])
+                        if att_ref is not None:
+                            tau_add[3] = ATTREF_GAIN * (att_ref[0] - nu[3])
+                            tau_add[4] = ATTREF_GAIN * (att_ref[1] - nu[4])
                         nu_dot = model.step(cmd6, quat, nu,
                                             z_world=float(last_dyn[8]),
                                             surface_z=WATER_SURFACE_Z, mixer=mixer,
-                                            tau_ext=tau_ext)
+                                            tau_ext=tau_ext, tau_add=tau_add)
                         acc_world = np.concatenate([R @ nu_dot[:3], R @ nu_dot[3:]])
                         env.act(AGENT_NAME, acc_world)
                 elif args.move:

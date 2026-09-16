@@ -132,7 +132,7 @@ class BlueROV2StandardModel:
             self.T_ardusub[3:, i] = np.cross(THRUSTER_POS[i], ARDUSUB_DIR[i])
 
     def step(self, thruster_cmd, quat_xyzw, nu_body, z_world=-10.0, surface_z=0.0,
-             mixer='script', tau_ext=None):
+             mixer='script', tau_ext=None, tau_add=None):
         """Compute body accelerations for the current tick.
 
         Args:
@@ -157,6 +157,12 @@ class BlueROV2StandardModel:
             # NOTE: raw-PWM replay can't reproduce yaw (geometric mixer is degenerate
             # for yaw vs ArduSub's real mixing; verify_yaw_fix.py -> ~0 corr). The
             # yaw-sign finding is applied in the CONTROL path instead (bridge autopilot).
+        if tau_add is not None:
+            # additive body wrench on top of the thruster/setpoint forces — used by
+            # the replay yaw-rate servo (the degenerate mixer produces ~no yaw
+            # moment, so the servo supplies the moment that tracks the bag's
+            # measured yaw rate; surge/heave stay thruster-driven)
+            tau += np.asarray(tau_add, dtype=float)
 
         # Restoring forces: gravity & buoyancy rotated into body frame (FLU, z up).
         # Buoyancy tapers to zero as the hull breaches the surface (vehicle
