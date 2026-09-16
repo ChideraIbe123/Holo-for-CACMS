@@ -60,6 +60,10 @@ LINEAR_ACCELERATION_COV_DIAG = [8.999999999999999e-08] * 3
 # --- DVL: /dvl/twist (geometry_msgs/msg/TwistStamped) ---
 DVL_TOPIC = '/dvl/twist'
 DVL_FRAME_ID = 'dvl_link'           # confirmed against the real bag
+# Mount offset from vehicle center, FLU, meters — from the lab's own
+# BlueROV-Tools config/sensor_transforms.yaml (their frame is y-fwd/x-lat/z-up;
+# converted: x_flu=y_lab, y_flu=-x_lab, z_flu=z_lab).
+DVL_LEVER_ARM_FLU = np.array([-0.17145, 0.0889, -0.1143])
 # Angular fields are all-zero in the real bag (confirmed) -> left zero.
 
 # --- DVL quality topics (present in the real bag at ~14 Hz; published here with
@@ -319,6 +323,7 @@ class MavrosBridge:
     def on_imu(self, imu_data):
         accel = np.asarray(imu_data[0], dtype=float)   # body frame, m/s^2
         gyro = np.asarray(imu_data[1], dtype=float)    # body frame, rad/s
+        self._gyro_clean = gyro.copy()   # pre-noise body rates for the DVL lever arm
         if NOISE_ENABLED:
             E = self.effort
             gyro = gyro + np.array([
@@ -368,6 +373,13 @@ class MavrosBridge:
         v = np.asarray(dvl_data, dtype=float)[:3]      # body-frame velocity, m/s
         if np.isnan(v).any():
             return
+        # v13: DVL lever arm. The real DVL is mounted aft-below-left of center
+        # (AUVSL BlueROV-Tools config/sensor_transforms.yaml, converted from the
+        # lab's y-forward frame to FLU) and measures velocity AT ITS MOUNT:
+        # v_dvl = v_body + omega x r. During turns this adds ~|omega|*0.2 m/s of
+        # rotation-correlated content — real motion texture the noise model was
+        # (wrongly) asked to imitate on dvl_x/y.
+        v = v + np.cross(getattr(self, '_gyro_clean', np.zeros(3)), DVL_LEVER_ARM_FLU)
         # v7: colored per-axis DVL noise in the bridge (real DVL noise rolls off at
         # high freq like the gyros; engine white noise failed the spectral metric).
         if NOISE_ENABLED:
