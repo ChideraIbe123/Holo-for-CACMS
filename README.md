@@ -37,11 +37,14 @@ ANFIS-DDPG/fuzzy/PPO controllers plug in the same way. See
 Full results with figures: [docs/BlueROV2_Simulation_Report.pdf](docs/BlueROV2_Simulation_Report.pdf)
 
 **Fidelity scorecard** — the twin is evaluated against a reference floor: sim data must be
-no further from a real recording than real recordings are from each other (statistical
-distances per sensor channel, Mann-Whitney test). Current: 17/31 channel-metrics pass;
-notably the accelerometer distribution is statistically indistinguishable from real after
-modeling the sensor's true behavior (2 Hz sample-and-hold, milli-g quantization, found by
-this scorecard). See [media/scorecard_v3.png](media/scorecard_v3.png).
+no further from a real recording than real recordings are from each other. The pass/fail
+criterion is itself CALIBRATED on real data (`threshold_study.py`): conformal margins
+(leave-one-out over the real bags, alpha=0.95) replace the original Mann-Whitney test,
+which failed 18% of genuine real recordings. 41 metrics per comparison, including an
+order-aware autocorrelation metric; reference floor of 30 real bags. Current: 35/41
+pass. Notable finds along the way: the accelerometer's 2 Hz sample-and-hold + milli-g
+quantization, and the vehicle reporting angular rates in an FRD frame (vs FLU) — the
+root cause of its inverted yaw convention.
 
 <p float="left">
   <img src="media/P1_pool_trajectory_and_depth.png" width="49%"/>
@@ -128,7 +131,6 @@ Useful flags for `mavros_bridge.py`:
 - **The physics engine puts slow bodies to sleep** and then ignores applied forces
   (the vehicle can freeze mid-run after slowing for a turn). `pool_capture.py` has a
   watchdog that wakes it with a tiny teleport; keep it if you write new control loops.
-  `pool_debug.py` is the no-camera diagnostic used to find this.
 - Vehicle drag/added-mass coefficients come from published system identification of
   the BlueROV2 (Wu 2018) plus a thrust calibration against our own pool recording.
   When the lab measures its own coefficients, they drop into
