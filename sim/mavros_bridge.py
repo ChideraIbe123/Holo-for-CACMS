@@ -90,18 +90,21 @@ NOISE_ENABLED = True
 # Excitation-dependent noise: sigma(E) = a + b*E, E = mean |normalized thruster cmd|.
 # Fitted from 48 five-second windows across 5 real bags (fit_noise_model.py).
 # Applied in the bridge (engine sigmas are zeroed) so sigma can follow effort.
+# v11 rescale: with rotational trajectory matching supplying real motion, sigmas
+# were re-fit so sim per-axis increment totals match the 13-bag real means
+# (measured on v10 campaign runs; e.g. dvl was -53% low, gyros -31..-38% low).
+# accel_x deliberately NOT raised: its v10 excess (+109%) was servo-chatter
+# gravity leak, fixed by the ref low-pass instead.
 NOISE_MODEL = {
-    'gyro_x': (0.00635, 0.13451),
-    'gyro_y': (0.01378, 0.02021),  # v8: fitted values x0.65 — measured sim increment std
-                                   # 0.0535 vs real multi-bag mean 0.0349 (sim 1.53x too hot;
-                                   # earlier "needs increase" note had the direction wrong)
-    'gyro_z': (0.04141, 0.48643),
-    'accel_x': (0.15382, 0.21025),
-    'accel_y': (0.09926, 0.14328),
-    'accel_z': (0.04064, 0.02536),
-    'dvl_x': (0.01983, 0.04191),
-    'dvl_y': (0.01757, 0.08603),
-    'dvl_z': (0.01061, 0.00000),
+    'gyro_x': (0.00921, 0.19504),   # x1.45
+    'gyro_y': (0.02053, 0.03011),   # x1.49
+    'gyro_z': (0.06212, 0.72965),   # x1.50
+    'accel_x': (0.15382, 0.21025),  # x1.00 (see note above)
+    'accel_y': (0.11117, 0.16047),  # x1.12
+    'accel_z': (0.05446, 0.03398),  # x1.34
+    'dvl_x': (0.02975, 0.06287),    # x1.50
+    'dvl_y': (0.02636, 0.12905),    # x1.50
+    'dvl_z': (0.01517, 0.00000),    # x1.43
 }
 
 
@@ -160,8 +163,12 @@ YAWREF_SIGN = -1.0
 # rocks during replay, so pitch/roll motion must be trajectory-matched like yaw.
 # Signs empirically gated per axis before each campaign (run_v10 sign check).
 ATTREF_GAIN = 1.5    # N*m/(rad/s); restoring moments are stiffer in roll/pitch
+# Sign-gate findings (v10): x +0.63, y -0.86, z +0.77 -> x keeps +1, y flips.
+# The pattern (x same, y and z inverted) = FLU-vs-FRD frame mismatch: the real
+# vehicle's angular rates are FRD relative to the sim's FLU body frame. This
+# EXPLAINS the yaw inversion seen all along, rather than just patching it.
 ATTREF_SIGN_X = 1.0
-ATTREF_SIGN_Y = 1.0
+ATTREF_SIGN_Y = -1.0
 CTRL_TAU_MAX = np.array([90.0, 90.0, 120.0, 0.0, 0.0, 22.0])  # BlueROV2 axis force/torque limits
 CTRL_TIMEOUT = 1.0        # s; zero the command if no setpoint arrives
 
@@ -537,13 +544,23 @@ def main():
                         replay['smooth'] += alpha * (raw - replay['smooth'])
                         cmd6 = replay['smooth']
                         mixer = 'ardusub'
+                        # v11: low-pass the rate refs (~1 s) — they are raw 10 Hz gyro
+                        # measurements, and servoing to their noise injects it as real
+                        # torque (chatter inflated accel_x 2x via gravity/lever leak).
+                        # Servo supplies MOTION; injected noise supplies noise.
+                        alpha_r = 1.0 / (1.0 + 1.0 * ticks_per_sec)
                         if replay['gz'] is not None and YAWREF_GAIN > 0:
                             tgz, gz = replay['gz']
-                            yaw_ref = YAWREF_SIGN * float(np.interp(t, tgz, gz))
+                            raw_z = YAWREF_SIGN * float(np.interp(t, tgz, gz))
+                            replay['lp_z'] = replay.get('lp_z', raw_z) + alpha_r * (raw_z - replay.get('lp_z', raw_z))
+                            yaw_ref = replay['lp_z']
                         if replay['gxy'] is not None and ATTREF_GAIN > 0:
                             tg, gx, gy = replay['gxy']
-                            att_ref = (ATTREF_SIGN_X * float(np.interp(t, tg, gx)),
-                                       ATTREF_SIGN_Y * float(np.interp(t, tg, gy)))
+                            raw_x = ATTREF_SIGN_X * float(np.interp(t, tg, gx))
+                            raw_y = ATTREF_SIGN_Y * float(np.interp(t, tg, gy))
+                            replay['lp_x'] = replay.get('lp_x', raw_x) + alpha_r * (raw_x - replay.get('lp_x', raw_x))
+                            replay['lp_y'] = replay.get('lp_y', raw_y) + alpha_r * (raw_y - replay.get('lp_y', raw_y))
+                            att_ref = (replay['lp_x'], replay['lp_y'])
                         if t > replay['t'][-1]:
                             break
                     elif args.move and last_dyn is not None:
