@@ -90,21 +90,25 @@ NOISE_ENABLED = True
 # Excitation-dependent noise: sigma(E) = a + b*E, E = mean |normalized thruster cmd|.
 # Fitted from 48 five-second windows across 5 real bags (fit_noise_model.py).
 # Applied in the bridge (engine sigmas are zeroed) so sigma can follow effort.
+# v12: gyro/dvl sigmas REVERTED to v10 — the v11 raise fought the ACF metrics
+# (noisier increments = further from real's +0.7 lag-1). Missing variance is the
+# low-freq rocking band, retained by the shorter ref LP instead. Accel kept at v11.
+# (superseded note: v11 rescale below)
 # v11 rescale: with rotational trajectory matching supplying real motion, sigmas
 # were re-fit so sim per-axis increment totals match the 13-bag real means
 # (measured on v10 campaign runs; e.g. dvl was -53% low, gyros -31..-38% low).
 # accel_x deliberately NOT raised: its v10 excess (+109%) was servo-chatter
 # gravity leak, fixed by the ref low-pass instead.
 NOISE_MODEL = {
-    'gyro_x': (0.00921, 0.19504),   # x1.45
-    'gyro_y': (0.02053, 0.03011),   # x1.49
-    'gyro_z': (0.06212, 0.72965),   # x1.50
+    'gyro_x': (0.00635, 0.13451),   # x1.45
+    'gyro_y': (0.01378, 0.02021),   # x1.49
+    'gyro_z': (0.04141, 0.48643),   # x1.50
     'accel_x': (0.15382, 0.21025),  # x1.00 (see note above)
     'accel_y': (0.11117, 0.16047),  # x1.12
     'accel_z': (0.05446, 0.03398),  # x1.34
-    'dvl_x': (0.02975, 0.06287),    # x1.50
-    'dvl_y': (0.02636, 0.12905),    # x1.50
-    'dvl_z': (0.01517, 0.00000),    # x1.43
+    'dvl_x': (0.01983, 0.04191),    # x1.50
+    'dvl_y': (0.01757, 0.08603),    # x1.50
+    'dvl_z': (0.01061, 0.00000),    # x1.43
 }
 
 
@@ -548,7 +552,7 @@ def main():
                         # measurements, and servoing to their noise injects it as real
                         # torque (chatter inflated accel_x 2x via gravity/lever leak).
                         # Servo supplies MOTION; injected noise supplies noise.
-                        alpha_r = 1.0 / (1.0 + 1.0 * ticks_per_sec)
+                        alpha_r = 1.0 / (1.0 + 0.3 * ticks_per_sec)  # v12: 0.3 s — keep the 0.5-2 Hz rocking band (ACF carrier), still kill >3 Hz chatter
                         if replay['gz'] is not None and YAWREF_GAIN > 0:
                             tgz, gz = replay['gz']
                             raw_z = YAWREF_SIGN * float(np.interp(t, tgz, gz))
