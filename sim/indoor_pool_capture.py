@@ -112,7 +112,8 @@ def main():
         "location": [-1.1, 0.0, 0.1], "rotation": [0.0, 6.0, 0.0],
         "Hz": FPS, "configuration": {"CaptureWidth": WIDTH, "CaptureHeight": HEIGHT},
     })
-    # stationary corner cam (second agent, zero accel = frozen tripod), submerged
+    # stationary corner cam — KNOWN FLAKY in this tight pool (the tripod agent
+    # ends up displaced; chase cam is the reliable footage source)
     scenario["agents"].append({
         "agent_name": "cam0", "agent_type": "BlueROV2",
         "control_scheme": 2,
