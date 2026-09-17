@@ -25,10 +25,13 @@ run-to-run noise.*
 
 ## Course
 
-- **3×3 m square**, counter-clockwise, waypoints (0,0)→(3,0)→(3,3)→(0,3)→(0,0), matching
-  `WAYPOINTS` in `waypoint_controller.py` and `SQUARE` in `score_ranking.py`. Shrink to
-  2×2 m ONLY if pool clearance requires it — then change both constants everywhere (sim
-  reruns included) so sim and real stay identical.
+- **UPDATE (2026-09-17): the lab pool is an Intex 26770, inner 4.0 × 2.0 m, water depth
+  1.05 m** (manual + published capacity; sim twin: `indoor_pool_capture.py`). A 3×3 m
+  square does NOT fit. **Course for the real session: 2.4 × 0.8 m rectangle**, centered
+  (≥0.55 m end / ≥0.37 m side clearance incl. vehicle body), waypoints
+  (0,0)→(2.4,0)→(2.4,0.8)→(0,0.8)→(0,0). Change `WAYPOINTS` in `waypoint_controller.py`
+  and `SQUARE` in `score_ranking.py` to this rectangle and RERUN the sim benchmark on the
+  same course before the session (sim and real must be identical).
 - Start **ON the path** at (0,0), pointing along +x (the first leg). The origin is wherever
   the vehicle is when its controller starts — the course is relative, no pool survey needed.
 - Depth: constant target (sim uses −0.6 m; use the pool's safe equivalent), held by the
