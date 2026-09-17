@@ -106,7 +106,7 @@ NOISE_ENABLED = True
 NOISE_MODEL = {
     'gyro_x': (0.00635, 0.13451),   # x1.45
     'gyro_y': (0.01378, 0.02021),   # x1.49
-    'gyro_z': (0.04141, 0.48643),   # x1.50
+    'gyro_z': (0.03313, 0.38914),   # v15 x0.8: v13 (x1, a=.5) too rough, v14 (x0.6, a=.85) too smooth — interpolate
     'accel_x': (0.15382, 0.21025),  # x1.00 (see note above)
     'accel_y': (0.11117, 0.16047),  # x1.12
     'accel_z': (0.05446, 0.03398),  # x1.34
@@ -129,7 +129,7 @@ ACCEL_LSB = 0.00980665                           # real accel is quantized at 1 
 ACCEL_UPDATE_P = 0.19
 # HYBRID: constant per-axis accel sigmas (multi-bag means, the v3 config that passed
 # all accel metrics). Excitation model kept for gyros only (helped there).
-ACCEL_SIGMA_CONST = [0.19, 0.15, 0.05]
+ACCEL_SIGMA_CONST = [0.184, 0.15, 0.05]  # v14: accel_x.w1 sat 1% over margin
 DVL_FOM_JITTER = True                            # fom ~ max(0, N(mean, std)) as in real bag
 DVL_FOM_STD = 0.00185
 
@@ -177,6 +177,12 @@ ATTREF_GAIN = 1.5    # N*m/(rad/s); restoring moments are stiffer in roll/pitch
 # EXPLAINS the yaw inversion seen all along, rather than just patching it.
 ATTREF_SIGN_X = 1.0
 ATTREF_SIGN_Y = -1.0
+# v14: heave-trajectory matching — servo body heave rate to the bag's measured
+# depth rate (rel_alt derivative, heavily low-passed: 3 Hz + 1 mm quantized).
+# Targets rel_alt/dvl_z ACF: real bobbing texture instead of noise imitation.
+# Both rel_alt and FLU w are z-up, so sign is +1 by construction.
+HEAVEREF_GAIN = 40.0   # N per (m/s) heave-rate error
+HEAVEREF_LP = 0.5      # s (v15: 1.0 filtered out real bobbing band rel_alt.acf needs)
 CTRL_TAU_MAX = np.array([90.0, 90.0, 120.0, 0.0, 0.0, 22.0])  # BlueROV2 axis force/torque limits
 CTRL_TIMEOUT = 1.0        # s; zero the command if no setpoint arrives
 
@@ -238,14 +244,19 @@ def quat_multiply_xyzw(a, b):
 # frequency; white noise puts too much power in the top of the band and fails the
 # spectral metric. AR1_A sets the corner (0=white, ->1 = heavier low-pass).
 AR1_A = 0.5
+# v14: per-channel AR1 corner. AR(1) increment lag-1 autocorr = (a-1)/2 — never
+# positive, so noise can only approach neutrality (a->1) while MOTION supplies the
+# real +0.7. Channels whose ACF distance is noise-dominated get a higher corner.
+AR1_A_CH = {'gyro_z': 0.7, 'accel_y': 0.8}
 _ar1_state = {}
 
 
 def colored(key, sigma):
-    """AR(1) low-pass noise with stationary std = sigma."""
+    """AR(1) low-pass noise with stationary std = sigma (per-channel corner)."""
+    a = AR1_A_CH.get(key, AR1_A)
     prev = _ar1_state.get(key, 0.0)
-    innov = np.random.randn() * sigma * np.sqrt(1.0 - AR1_A * AR1_A)
-    val = AR1_A * prev + innov
+    innov = np.random.randn() * sigma * np.sqrt(1.0 - a * a)
+    val = a * prev + innov
     _ar1_state[key] = val
     return val
 
@@ -517,7 +528,8 @@ def main():
         rp = np.load(args.replay)
         replay = {'t': rp['t'], 'cmd': rp['cmd'], 'z0': float(rp['z0']), 'smooth': np.zeros(6),
                   'gz': (rp['t_gz'], rp['gz']) if 't_gz' in rp else None,
-                  'gxy': (rp['t_gz'], rp['gx'], rp['gy']) if 'gx' in rp else None}
+                  'gxy': (rp['t_gz'], rp['gx'], rp['gy']) if 'gx' in rp else None,
+                  'altref': (rp['t_alt'], rp['alt']) if 't_alt' in rp and len(rp['t_alt']) > 5 else None}
         for agent in scenario['agents']:
             if agent['agent_name'] == AGENT_NAME:
                 # HYBRID: clamp spawn depth so the vehicle stays submerged (surface
@@ -544,6 +556,7 @@ def main():
                     tau_ext = None
                     yaw_ref = None
                     att_ref = None
+                    heave_ref = None
                     if args.control:
                         cmd6 = np.zeros(6)   # thruster path unused in control mode
                         if last_dyn is not None:
@@ -577,6 +590,15 @@ def main():
                             replay['lp_x'] = replay.get('lp_x', raw_x) + alpha_r * (raw_x - replay.get('lp_x', raw_x))
                             replay['lp_y'] = replay.get('lp_y', raw_y) + alpha_r * (raw_y - replay.get('lp_y', raw_y))
                             att_ref = (replay['lp_x'], replay['lp_y'])
+                        if replay['altref'] is not None and HEAVEREF_GAIN > 0:
+                            ta, al = replay['altref']
+                            dt_h = 0.5
+                            zdot = (np.interp(t, ta, al) - np.interp(t - dt_h, ta, al)) / dt_h
+                            a_h = 1.0 / (1.0 + HEAVEREF_LP * ticks_per_sec)
+                            replay['lp_w'] = replay.get('lp_w', 0.0) + a_h * (float(zdot) - replay.get('lp_w', 0.0))
+                            heave_ref = replay['lp_w']
+                        else:
+                            heave_ref = None
                         if t > replay['t'][-1]:
                             break
                     elif args.move and last_dyn is not None:
@@ -599,6 +621,8 @@ def main():
                         if att_ref is not None:
                             tau_add[3] = ATTREF_GAIN * (att_ref[0] - nu[3])
                             tau_add[4] = ATTREF_GAIN * (att_ref[1] - nu[4])
+                        if yaw_ref is not None and heave_ref is not None:
+                            tau_add[2] = HEAVEREF_GAIN * (heave_ref - nu[2])
                         nu_dot = model.step(cmd6, quat, nu,
                                             z_world=float(last_dyn[8]),
                                             surface_z=WATER_SURFACE_Z, mixer=mixer,

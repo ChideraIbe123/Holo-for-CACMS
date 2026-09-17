@@ -40,9 +40,12 @@ def main():
     t0 = pwm[0, 0]
     cmd = np.clip((pwm[:, 1:7] - 1500.0) / 400.0, -1, 1)
     z0 = float(relalt[0][1]) if relalt else -0.5
+    relalt = np.array(relalt) if relalt else np.zeros((0, 2))
     np.savez_compressed(out, t=pwm[:, 0] - t0, cmd=cmd, z0=z0,
                         t_gz=gyro[:, 0] - t0, gz=gyro[:, 3],
-                        gx=gyro[:, 1], gy=gyro[:, 2])
+                        gx=gyro[:, 1], gy=gyro[:, 2],
+                        t_alt=relalt[:, 0] - t0 if len(relalt) else relalt[:, :0],
+                        alt=relalt[:, 1] if len(relalt) else relalt[:, :0])
     print(f"[profile] {out}: {len(pwm)} cmds over {pwm[-1,0]-t0:.0f}s, z0={z0:.2f}, "
           f"mean effort {np.abs(cmd).mean():.3f}, {len(gyro)} yaw-rate refs")
 
