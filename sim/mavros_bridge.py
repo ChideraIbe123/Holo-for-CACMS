@@ -471,6 +471,9 @@ def main():
     parser.add_argument('--control', action='store_true',
                         help='closed-loop: drive the vehicle from /cmd_vel velocity setpoints '
                              '(external controller closes the loop via /deadreckon/odom)')
+    parser.add_argument('--pool', choices=['intex'], default=None,
+                        help='spawn the lab pool geometry and start inside it '
+                             '(benchmark runs in the actual test environment)')
     parser.add_argument('--replay', type=str, default=None,
                         help='npz command profile from a real bag (extract_cmd_profile.py); '
                              'replays real thruster commands instead of the scripted path')
@@ -538,11 +541,22 @@ def main():
         print(f"[bridge] replaying real command profile: {args.replay} "
               f"({len(replay['t'])} cmds, {replay['t'][-1]:.0f}s, spawn z {replay['z0']:.2f})")
 
+    if args.pool == 'intex':
+        import intex_pool
+        for agent in scenario['agents']:
+            if agent['agent_name'] == AGENT_NAME:
+                agent['location'] = list(intex_pool.SPAWN)
+                agent['rotation'] = [0, 0, 0]
+        print('[bridge] pool: Intex 26770 twin (4x2 m, 1.05 m water) — in-pool spawn')
+
     if model is not None:
         # DynamicsSensor captures every tick in standard mode; keep GT topic at 50 Hz
         bridge._gt_decim = max(1, int(ticks_per_sec / 50))
 
     with holoocean.make(scenario_cfg=scenario, show_viewport=not args.headless) as env:
+        if args.pool == 'intex':
+            import intex_pool
+            intex_pool.spawn_pool(env)
         t = 0.0
         wall_start = _time.time()
         last_dyn = None

@@ -17,9 +17,12 @@ import rclpy
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import TwistStamped
 
-WAYPOINTS = [(3.0, 0.0), (3.0, 3.0), (0.0, 3.0), (0.0, 0.0)]
-REACH = 0.6
-DEPTH_TARGET = -0.6
+# Course = the Intex-pool rectangle (2.0 x 0.6 m): the largest course that fits
+# the lab's actual 4x2 m pool with wall clearance (see indoor_pool_capture.py).
+# The REAL ranking session runs this same rectangle.
+WAYPOINTS = [(2.0, 0.0), (2.0, 0.6), (0.0, 0.6), (0.0, 0.0)]
+REACH = 0.3
+DEPTH_TARGET = -0.5
 
 
 def yaw_from_quat(q):

@@ -32,8 +32,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 # commanded reference path (pool-scaled square transect); closed loop.
-SQUARE = [(0, 0), (3, 0), (3, 3), (0, 3), (0, 0)]
-SETTLE_BAND = 0.3      # m; "on the trajectory" tolerance
+SQUARE = [(0, 0), (2, 0), (2, 0.6), (0, 0.6), (0, 0)]  # Intex-pool course (real 4x2 m pool)
+SETTLE_BAND = 0.2      # m; tightened for the smaller course
 SETTLE_LIMIT = 20.0    # s; von Benzon success criterion
 
 
