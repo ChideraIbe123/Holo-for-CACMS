@@ -7,7 +7,7 @@ conventions, and it swims in a spec-exact copy of the lab's Intex test pool. Our
 navigation code runs on it **unchanged**, and a controller-ranking benchmark is ready
 for the lab's real controllers.
 
-**Current fidelity: 34 of 41 statistical checks indistinguishable from real data** when
+**Current fidelity: 38 of 41 statistical checks indistinguishable from real data** when
 sim and real are compared in the same pool on the same maneuvers (35–37/41 on the older
 open-water floors). The remaining misses are marginal and have a named mechanism (DVL
 topic sample-and-hold, see Roadmap).
@@ -182,8 +182,8 @@ media/   figures and footage
 2. **Real ranking session** per `docs/real_ranking_protocol.md` (course: 2.0×0.6 m —
    a 3×3 m course does not fit the 4×2 m pool), then `score_correlation.py` for the
    sim-vs-real ranking correlation.
-3. Model the DVL topic's duplicate-sample republication (the last marginal fidelity
-   misses), using the 2026-09-17 tub recordings.
+3. Chase the last three marginal fidelity misses (accel_x amplitude, dvl_z/rel_alt
+   temporal texture) — likely needs the armed-hover vibration characterization.
 
 ## Sources
 

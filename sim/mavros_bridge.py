@@ -64,6 +64,14 @@ DVL_FRAME_ID = 'dvl_link'           # confirmed against the real bag
 # BlueROV-Tools config/sensor_transforms.yaml (their frame is y-fwd/x-lat/z-up;
 # converted: x_flu=y_lab, y_flu=-x_lab, z_flu=z_lab).
 DVL_LEVER_ARM_FLU = np.array([-0.17145, 0.0889, -0.1143])
+# The real /dvl/twist stream publishes each measurement TWICE (2026-09-17 tub
+# bags: 17.8 Hz topic, exactly 50% duplicated consecutive samples => ~9 Hz true
+# measurements; the lab's dvl_tcp_driver is a 1:1 passthrough, so the doubling
+# is the sensor stream itself). Modeled by halving the engine DVL rate to 9 Hz
+# and publishing every measurement twice — reproduces the real duplicate
+# structure the fidelity metrics see.
+DVL_DUPLICATE_EACH = True
+DVL_TRUE_HZ = 9
 # Angular fields are all-zero in the real bag (confirmed) -> left zero.
 # v16: publish /dvl/twist in the vehicle's RAW wire convention. The lab's own
 # estimator (BlueROV-Tools st_car_ekf.py) converts the topic to base_link with
@@ -492,6 +500,15 @@ class MavrosBridge:
         msg.twist.linear.z = float(v[2])
         # angular left at zero — not populated by the real DVL driver
         self.dvl_pub.publish(msg)
+        if DVL_DUPLICATE_EACH:
+            # real stream doubles every measurement (see DVL_DUPLICATE_EACH note)
+            dup = TwistStamped()
+            dup.header.stamp = self._stamp()
+            dup.header.frame_id = DVL_FRAME_ID
+            dup.twist.linear.x = float(v[0])
+            dup.twist.linear.y = float(v[1])
+            dup.twist.linear.z = float(v[2])
+            self.dvl_pub.publish(dup)
 
         valid = Bool()
         valid.data = True               # HoloOcean DVL has no dropout model
@@ -596,6 +613,14 @@ def main():
     with open(SCENARIO_JSON) as f:
         scenario = json.load(f)
     ticks_per_sec = float(scenario['ticks_per_sec'])
+
+    if DVL_DUPLICATE_EACH:
+        for agent in scenario.get('agents', []):
+            for sensor in agent.get('sensors', []):
+                if sensor.get('sensor_type') == 'DVLSensor':
+                    sensor['Hz'] = DVL_TRUE_HZ
+        print(f'[bridge] DVL: {DVL_TRUE_HZ} Hz measurements, each published twice '
+              f'(real-stream duplicate structure)')
 
     if not NOISE_ENABLED:
         # zero every sigma so HoloOcean's in-engine noise is off too
