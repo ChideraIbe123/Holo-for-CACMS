@@ -9,8 +9,8 @@ for the lab's real controllers.
 
 **Current fidelity: 38 of 41 statistical checks indistinguishable from real data** when
 sim and real are compared in the same pool on the same maneuvers (35–37/41 on the older
-open-water floors). The remaining misses are marginal and have a named mechanism (DVL
-topic sample-and-hold, see Roadmap).
+open-water floors). The three remaining misses are marginal (14-43% over their margins) and likely
+need the armed-hover vibration characterization (see Roadmap).
 
 ![Simulated BlueROV2 in the virtual pool](media/pool_demo.gif)
 
@@ -48,7 +48,7 @@ headline experiment once the real controllers and a pool session exist.
 | Sensor noise | Armed/disarmed float tests: true sensor floors vs driving disturbance | sensor noise is 20–100× below in-mission floors; both modeled separately |
 | Pool | Intex 26770 manual + published capacity: 4.0×2.0 m, 1.05 m water | exact; autonomous laps 100% contained |
 | End to end | Lab dead-reckoning, unchanged, on sim data | ~3% drift, same as on real data |
-| Statistical fidelity | 41 metrics vs calibrated real-real floor | 34/41 matched-venue |
+| Statistical fidelity | 41 metrics vs calibrated real-real floor | 38/41 matched-venue |
 
 Full write-up: [docs/BlueROV2_Simulation_Report.pdf](docs/BlueROV2_Simulation_Report.pdf)
 · Real-session procedure: [docs/real_ranking_protocol.md](docs/real_ranking_protocol.md)
