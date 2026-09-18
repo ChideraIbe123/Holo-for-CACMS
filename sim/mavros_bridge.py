@@ -27,7 +27,7 @@ import holoocean
 import rclpy
 
 from bluerov2_standard_model import BlueROV2StandardModel
-from sensor_msgs.msg import Imu
+from sensor_msgs.msg import Imu, FluidPressure
 from geometry_msgs.msg import TwistStamped
 from std_msgs.msg import Float64, Float32, Bool
 from nav_msgs.msg import Odometry
@@ -65,12 +65,40 @@ DVL_FRAME_ID = 'dvl_link'           # confirmed against the real bag
 # converted: x_flu=y_lab, y_flu=-x_lab, z_flu=z_lab).
 DVL_LEVER_ARM_FLU = np.array([-0.17145, 0.0889, -0.1143])
 # Angular fields are all-zero in the real bag (confirmed) -> left zero.
+# v16: publish /dvl/twist in the vehicle's RAW wire convention. The lab's own
+# estimator (BlueROV-Tools st_car_ekf.py) converts the topic to base_link with
+# DVL_RAW_TO_BASE_LINK = diag(1,-1,-1) ("paper_raw_to_base", GT-validated by
+# their audit_dvl_conventions.py 48-permutation sweep) and then un-does a fitted
+# mount misalignment of -1.848 deg yaw (train_fit_yaw_only, 64 sparse pairs —
+# see st_car_ekf_deployable.json + their paper Sec. "calibration"). The real
+# topic therefore carries FRD-signed y/z and the +1.848 deg mount error; the
+# sim publishes the same so the wire format is field-identical and the lab's
+# deployed EKF config works against it unmodified. 'flu' = pre-v16 behavior.
+DVL_FRAME_MODE = 'raw'        # 'raw' | 'flu' (--dvl-frame overrides)
+DVL_RAW_FROM_BASE = np.diag([1.0, -1.0, -1.0])
+DVL_MISALIGN_YAW_DEG = 1.8482342269438456   # raw carries +; lab corrects with -
+_mis = math.radians(DVL_MISALIGN_YAW_DEG)
+DVL_MISALIGN_RZ = np.array([[math.cos(_mis), -math.sin(_mis), 0.0],
+                            [math.sin(_mis),  math.cos(_mis), 0.0],
+                            [0.0, 0.0, 1.0]])
 
 # --- DVL quality topics (present in the real bag at ~14 Hz; published here with
 #     each DVL message, which is what the dead-reckon node's gating consumes) ---
 VELOCITY_VALID_TOPIC = '/dvl/velocity_valid'
 FOM_TOPIC = '/dvl/fom'
 DVL_FOM_VALUE = 0.002               # median FOM in the real bag (mean 0.0021, max 0.0057)
+
+# --- v16: slow MAVROS raw streams + DVL altitude (present in EVERY real bag;
+#     adding them makes the twin drop-in for the lab's own tools, e.g.
+#     sensor_processing/tools/pressure/static_float_test.py runs unmodified). ---
+IMU_RAW_TOPIC = '/mavros/imu/data_raw'      # sensor_msgs/Imu, real ~1.8 Hz
+IMU_RAW_DECIM = 5                           # 10 Hz IMU path -> 2 Hz
+STATIC_PRESSURE_TOPIC = '/mavros/imu/static_pressure'  # FluidPressure, ~1.8 Hz
+ATM_PRESSURE_PA = 101325.0
+RHO_WATER = 1000.0                          # freshwater pool
+G_PRESSURE = 9.80665                        # lab configs use standard g0 for baro
+DVL_ALT_TOPIC = '/dvl/altitude'             # Float32 bottom distance, w/ each twist
+POOL_FLOOR_DEPTH = 3.0                      # m below surface (flat floor assumed)
 
 # --- Depth: /mavros/global_position/rel_alt (std_msgs/msg/Float64) ---
 DEPTH_TOPIC = '/mavros/global_position/rel_alt'
@@ -116,7 +144,24 @@ NOISE_MODEL = {
 }
 
 
+# v16: TRUE static sensor floors, from the lab's own disarmed static-float
+# characterization (BlueROV-Tools docs/ekf_setup_notes.txt, "Early Calm Runs"):
+# DVL sigma 1.5e-4/2.0e-4/9e-5 m/s, gyro 3.5-4.5e-4 rad/s. These are 20-100x
+# below the excitation-model intercepts above — the intercepts were fit on
+# in-mission windows and include thruster vibration, which is MOTION, not
+# sensor noise. When thrusters are truly quiet the bridge now injects only the
+# static floor, so a disarmed float in sim reproduces the lab's documented
+# static test (their static_float_test.py can verify this directly).
+STATIC_EFFORT_THRESH = 0.01
+STATIC_SIGMA = {
+    'gyro_x': 4.0e-4, 'gyro_y': 4.0e-4, 'gyro_z': 4.5e-4,
+    'dvl_x': 1.5e-4, 'dvl_y': 2.0e-4, 'dvl_z': 9.0e-5,
+}
+
+
 def noise_sigma(ch, effort):
+    if effort < STATIC_EFFORT_THRESH and ch in STATIC_SIGMA:
+        return STATIC_SIGMA[ch]
     a, b = NOISE_MODEL[ch]
     return a + b * effort
 ORIENTATION_NOISE_RPY_DEG = [0.32, 0.34, 1.39]   # DynamicsSensor is noiseless in-engine
@@ -275,6 +320,11 @@ class MavrosBridge:
         self.depth_pub = node.create_publisher(Float64, DEPTH_TOPIC, 10)
         self.vel_valid_pub = node.create_publisher(Bool, VELOCITY_VALID_TOPIC, 10)
         self.fom_pub = node.create_publisher(Float32, FOM_TOPIC, 10)
+        self.imu_raw_pub = node.create_publisher(Imu, IMU_RAW_TOPIC, 10)
+        self.press_pub = node.create_publisher(FluidPressure, STATIC_PRESSURE_TOPIC, 10)
+        self.dvl_alt_pub = node.create_publisher(Float32, DVL_ALT_TOPIC, 10)
+        self._imu_raw_count = 0
+        self._last_z = None    # last raw depth-sensor z, for pressure/altitude
         self.gt_pub = node.create_publisher(Odometry, GT_TOPIC, 10)
         self.cmd_vel = np.zeros(4)   # [surge, sway, heave, yaw_rate] desired
         self.cmd_time = -1e9
@@ -380,6 +430,34 @@ class MavrosBridge:
         msg.linear_acceleration_covariance = _diag_to_cov9(LINEAR_ACCELERATION_COV_DIAG)
         self.imu_pub.publish(msg)
 
+        # v16: /mavros/imu/data_raw + /mavros/imu/static_pressure, decimated to
+        # 2 Hz (real bags: 1.8 Hz each). data_raw = same accel/gyro, orientation
+        # zeroed with orientation_covariance[0] = -1 (MAVROS "not provided"
+        # convention, confirmed field-for-field against rosbag_20260310_150822).
+        self._imu_raw_count += 1
+        if self._imu_raw_count % IMU_RAW_DECIM == 0:
+            raw = Imu()
+            raw.header.stamp = msg.header.stamp
+            raw.header.frame_id = IMU_FRAME_ID
+            raw.orientation.w = 1.0
+            cov = [0.0] * 9
+            cov[0] = -1.0
+            raw.orientation_covariance = cov
+            raw.angular_velocity = msg.angular_velocity
+            raw.angular_velocity_covariance = _diag_to_cov9(ANGULAR_VELOCITY_COV_DIAG)
+            raw.linear_acceleration = msg.linear_acceleration
+            raw.linear_acceleration_covariance = _diag_to_cov9(LINEAR_ACCELERATION_COV_DIAG)
+            self.imu_raw_pub.publish(raw)
+
+            if self._last_z is not None:
+                press = FluidPressure()
+                press.header.stamp = msg.header.stamp
+                press.header.frame_id = IMU_FRAME_ID
+                depth = max(0.0, -(self._last_z - WATER_SURFACE_Z))
+                press.fluid_pressure = ATM_PRESSURE_PA + RHO_WATER * G_PRESSURE * depth
+                press.variance = 0.0    # real topic publishes variance 0.0
+                self.press_pub.publish(press)
+
     def on_dvl(self, dvl_data):
         v = np.asarray(dvl_data, dtype=float)[:3]      # body-frame velocity, m/s
         if np.isnan(v).any():
@@ -391,6 +469,13 @@ class MavrosBridge:
         # rotation-correlated content — real motion texture the noise model was
         # (wrongly) asked to imitate on dvl_x/y.
         v = v + np.cross(getattr(self, '_gyro_clean', np.zeros(3)), DVL_LEVER_ARM_FLU)
+        # v16: transform to the vehicle's raw wire convention (see constants):
+        # the mount misalignment rotates in base axes, then diag(1,-1,-1) gives
+        # the raw FRD-signed frame the real topic carries. Noise is added AFTER
+        # the transform — the per-axis sigmas were calibrated on the real raw
+        # topic, so they belong to raw axes (y/z negation is symmetric anyway).
+        if DVL_FRAME_MODE == 'raw':
+            v = DVL_RAW_FROM_BASE @ (DVL_MISALIGN_RZ @ v)
         # v7: colored per-axis DVL noise in the bridge (real DVL noise rolls off at
         # high freq like the gyros; engine white noise failed the spectral metric).
         if NOISE_ENABLED:
@@ -418,8 +503,16 @@ class MavrosBridge:
             fom.data = float(DVL_FOM_VALUE)
         self.fom_pub.publish(fom)
 
+        # v16: /dvl/altitude — WaterLinked bottom distance, sent in the same
+        # JSON message as the twist on the real vehicle (same rate). Flat floor.
+        if self._last_z is not None:
+            alt = Float32()
+            alt.data = float(max(0.0, POOL_FLOOR_DEPTH + (self._last_z - WATER_SURFACE_Z)))
+            self.dvl_alt_pub.publish(alt)
+
     def on_depth(self, depth_data):
         z = float(np.asarray(depth_data, dtype=float).flatten()[0])
+        self._last_z = z
         rel_alt = REL_ALT_SIGN * (z - WATER_SURFACE_Z)
         if NOISE_ENABLED and REL_ALT_QUANTIZATION > 0:
             rel_alt = round(rel_alt / REL_ALT_QUANTIZATION) * REL_ALT_QUANTIZATION
@@ -462,6 +555,7 @@ def scripted_command6(t, z=None, w_vert=0.0, z_target=-2.5):
 
 
 def main():
+    global NOISE_ENABLED, SCRIPT_CRUISE, SCRIPT_TURN, DVL_FRAME_MODE, POOL_FLOOR_DEPTH
     parser = argparse.ArgumentParser()
     parser.add_argument('--move', action='store_true', help='drive a scripted path instead of sitting still')
     parser.add_argument('--headless', action='store_true', help='run HoloOcean without a viewport window')
@@ -479,15 +573,20 @@ def main():
                              'replays real thruster commands instead of the scripted path')
     parser.add_argument('--cruise', type=float, default=0.50, help='scripted cruise command')
     parser.add_argument('--turn', type=float, default=0.44, help='scripted asymmetry command')
+    parser.add_argument('--dvl-frame', choices=['raw', 'flu'], default=DVL_FRAME_MODE,
+                        help="'raw' (default) = real wire convention: FRD-signed y/z + 1.85 deg "
+                             "mount yaw (lab's paper_raw_to_base EKF config un-does both); "
+                             "'flu' = pre-v16 base-frame FLU (for the legacy integrator, "
+                             "which never learned the raw transform)")
     parser.add_argument('--dynamics', choices=['standard', 'builtin'], default='standard',
                         help="'standard' = exact 6-thruster BlueROV2 Fossen model (default); "
                              "'builtin' = HoloOcean's 8-thruster Heavy dynamics")
     args = parser.parse_args()
 
-    global NOISE_ENABLED, SCRIPT_CRUISE, SCRIPT_TURN
     if args.no_noise:
         NOISE_ENABLED = False
     SCRIPT_CRUISE, SCRIPT_TURN = args.cruise, args.turn
+    DVL_FRAME_MODE = args.dvl_frame
 
     rclpy.init()
     node = rclpy.create_node('holoocean_mavros_bridge')
@@ -543,6 +642,7 @@ def main():
 
     if args.pool == 'intex':
         import intex_pool
+        POOL_FLOOR_DEPTH = 1.05    # v16: /dvl/altitude bottom distance in the pool twin
         for agent in scenario['agents']:
             if agent['agent_name'] == AGENT_NAME:
                 agent['location'] = list(intex_pool.SPAWN)

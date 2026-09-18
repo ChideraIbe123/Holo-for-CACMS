@@ -20,12 +20,12 @@ def main():
     path, out = sys.argv[1], sys.argv[2]
     if os.path.isdir(path):
         path = glob.glob(os.path.join(path, "*.mcap"))[0]
-    pwm, relalt, gyro = [], [], []
+    pwm, relalt, gyro, dvlalt = [], [], [], []
     with open(path, "rb") as f:
         reader = make_reader(f, decoder_factories=[DecoderFactory()])
         for _, ch, m, msg in reader.iter_decoded_messages(
                 topics=["/mavros/rc/out", "/mavros/global_position/rel_alt",
-                        "/mavros/imu/data"]):
+                        "/mavros/imu/data", "/dvl/altitude"]):
             t = m.log_time * 1e-9
             if ch.topic == "/mavros/rc/out":
                 pwm.append([t] + [float(msg.channels[i]) for i in range(6)])
@@ -33,8 +33,17 @@ def main():
                 gyro.append([t, float(msg.angular_velocity.x),
                              float(msg.angular_velocity.y),
                              float(msg.angular_velocity.z)])
+            elif ch.topic == "/dvl/altitude":
+                dvlalt.append([t, float(msg.data)])
             else:
                 relalt.append([t, msg.data])
+    # 2026-09-17 tub bags carry no rel_alt; depth from DVL altitude + the
+    # Intex pool's 1.05 m water column: z = altitude - 1.05 (surface z=0).
+    if not relalt and dvlalt:
+        TUB_DEPTH = 1.05
+        relalt = [[t, a - TUB_DEPTH] for t, a in dvlalt]
+        print("[profile] rel_alt absent -> depth derived from /dvl/altitude "
+              "(tub water column %.2f m)" % TUB_DEPTH)
     pwm = np.array(pwm)
     gyro = np.array(gyro)
     t0 = pwm[0, 0]
