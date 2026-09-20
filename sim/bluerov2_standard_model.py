@@ -35,6 +35,15 @@ ADDED_MASS = np.array([5.5, 12.7, 14.57, 0.12, 0.12, 0.12])
 # Damping (Wu 2018 Table 5.3), positive coefficients
 D_LIN = np.array([4.03, 6.22, 5.18, 0.07, 0.07, 0.07])
 D_QUAD = np.array([18.18, 21.66, 36.99, 1.55, 1.55, 1.55])
+# v17: per-axis drag corrections from the 2026-09-17 single-axis steady-state
+# runs (tub_sysid.py) — the first data exciting sway/heave/yaw. Scale =
+# (v_model/v_measured)^2 at the tested level: surge x1.34 (0.389 vs 0.336 m/s),
+# sway x3.55 (0.326 vs 0.173 — Wu coefficients + tether badly under-damp
+# lateral), heave x1.54 (0.226 vs 0.182), yaw x0.38 (0.78 vs 1.27 rad/s — the
+# real vehicle spins far faster than modeled). Roll/pitch unmeasured -> 1.
+AXIS_DRAG_CORR = np.array([1.34, 3.55, 1.54, 1.0, 1.0, 0.38])
+D_LIN = D_LIN * AXIS_DRAG_CORR
+D_QUAD = D_QUAD * AXIS_DRAG_CORR
 
 # Tuning knobs — fit these against the real vehicle's response.
 # THRUST_SCALE = 0.55 accounts for installed-thrust losses (thruster-hull
