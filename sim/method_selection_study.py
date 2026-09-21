@@ -268,14 +268,21 @@ def main():
     print(f"thr_div  ={thr_div:.4g} (hardest negatives below this: 5%; real runs "
           f"wrongly 'divergent': {100 * fn_div:.0f}%)")
 
+    np.savez(os.path.expanduser("~/data/method_scores.npz"),
+             **{f"{m}__{k}": np.array(v) for m in scores for k, v in scores[m].items()})
+
     if a.final:
         finals = load_dir(a.final)
         if not a.no_trim:
             finals = [knee_trim(r) for r in finals]
         ff = [window_features(f) for f in reals]
+        base = [m for m in ("w1", "acf", "mmd") if m in best_key] or [best_key]
+        mu = {m: np.nanmean(scores[m]["pos"]) for m in base}
+        sd = {m: np.nanstd(scores[m]["pos"]) + 1e-12 for m in base}
         verdicts = {"close": 0, "unsure": 0, "divergent": 0}
         for r in finals:
-            v = run_scores(r, reals, [best_key], ff)[best_key]
+            sc = run_scores(r, reals, base, ff)
+            v = max((sc[m] - mu[m]) / sd[m] for m in base) if len(base) > 1 else sc[base[0]]
             verdicts["close" if v <= thr_close else
                      "divergent" if v >= thr_div else "unsure"] += 1
         print(f"\nFINAL SIM ({a.final}) run verdicts by {best_key}: {verdicts}")
