@@ -143,7 +143,7 @@ def main():
                 nu_dot = model.step(cmd, quat, nu, z_world=float(last_dyn[8]),
                                     surface_z=WATER_SURFACE_Z)
                 env.act(AGENT_NAME, np.concatenate([R @ nu_dot[:3], R @ nu_dot[3:]]))
-                # physics-sleep watchdog (see pool_capture.py / work.md)
+                # physics-sleep watchdog (engine sleeps slow bodies; see work.md)
                 pos = last_dyn[6:9]
                 freeze_hist.append(pos.copy())
                 if len(freeze_hist) > 100:
