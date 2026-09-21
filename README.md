@@ -12,7 +12,7 @@ sim and real are compared in the same pool on the same maneuvers (35–37/41 on 
 open-water floors). The three remaining misses are marginal (14-43% over their margins) and likely
 need the armed-hover vibration characterization (see Roadmap).
 
-![Simulated BlueROV2 in the virtual pool](media/pool_demo.gif)
+![Simulated BlueROV2 in the virtual Intex pool](media/indoor_pool_chase.png)
 
 ## The three things this repo does
 
@@ -53,10 +53,7 @@ headline experiment once the real controllers and a pool session exist.
 Full write-up: [docs/BlueROV2_Simulation_Report.pdf](docs/BlueROV2_Simulation_Report.pdf)
 · Real-session procedure: [docs/real_ranking_protocol.md](docs/real_ranking_protocol.md)
 
-<p float="left">
-  <img src="media/indoor_pool_chase.png" width="49%"/>
-  <img src="media/benchmark_ranking_intex.png" width="44%"/>
-</p>
+<img src="media/benchmark_ranking_intex.png" width="70%"/>
 
 ## Setup (once)
 
@@ -113,8 +110,6 @@ sim/   the simulator (run these)
   scenario_bluerov.json       vehicle + sensor setup
   intex_pool.py               the lab pool's exact geometry (shared module)
   indoor_pool_capture.py      pool twin footage + containment verification
-  pool_capture.py             legacy CRCE pool twin (validated vs 2026 pool bags)
-  capture_video.py            open-water footage capture
   waypoint_controller.py      reference controllers (P/PD/pursuit/SMC), pool course
   lab_controller_adapter.py   drop-in slot for the lab's real controllers
   score_ranking.py            von Benzon RMSE/IAE ranking vs seed floor
@@ -123,7 +118,7 @@ sim/   the simulator (run these)
   threshold_study.py          calibrates the pass criterion on real data
   tubtest_floats.py           sensor-vs-vibration noise decomposition from floats
   extract_cmd_profile.py      real bag -> replayable profile (cmds, rates, depth)
-  validate_model_vs_bag.py    physics model vs a real recording
+  tub_sysid.py                steady-state dynamics validation on single-axis runs
   infer_signs_teleop.py       axis-sign check from piloted runs
 
 tools/  standalone helpers
