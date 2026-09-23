@@ -1,159 +1,149 @@
-# Building on the BlueROV2 Digital Twin — Team Instructions
+# Running the BlueROV2 Digital Twin — Operations Guide
 
-For lab teammates picking this up (written with the controller work in mind).
-The [README](README.md) is the general reference — setup, validation summary,
-file map. THIS file is the "how do I actually build on it" guide.
+How to run everything in this repo, end to end. The [README](README.md) covers
+what the twin is and how it was validated; this file is purely "type this, get
+that."
 
-## What you're inheriting, in one paragraph
+## Setup (once)
 
-A validated HoloOcean twin of our BlueROV2: it publishes the vehicle's exact
-ROS 2 topics (IMU / DVL / depth, field-for-field identical, statistically
-indistinguishable from real recordings on 38 of 41 calibrated checks), runs our
-unmodified `bluerov_dr` dead-reckoning on them, swims in a spec-exact copy of
-the lab's 4×2 m Intex pool, and has a controller-ranking benchmark (von Benzon
-2022 metrics) with ground truth that reality can't provide. The missing piece
-is YOUR controllers — the whole point is ranking the lab's real controllers in
-sim, then checking the ranking against a real pool session.
+Follow **Setup** in the README (HoloOcean needs an Epic-linked GitHub account;
+the python venv must be created with `--system-site-packages` so it sees ROS 2).
+Everything below assumes:
 
-## First 15 minutes
-
-1. Follow **Setup** in the README (HoloOcean needs the Epic-linked GitHub
-   account; python venv must see ROS 2).
-2. Sanity check — vehicle swims the pool and publishes real-format topics:
-   ```bash
-   source /opt/ros/humble/setup.bash && cd sim
-   PY=~/holoocean-env/bin/python        # your venv
-   $PY mavros_bridge.py --headless --move --pool intex --duration 60
-   ros2 topic echo /mavros/imu/data     # another terminal
-   ```
-3. Full closed-loop check (sim → sensors → dead_reckon → controller → sim):
-   ```bash
-   bash scripts/run_closedloop_test.sh
-   ```
-   Needs `bluerov_dr` cloned next door; the script header says where.
-
-## The mental model
-
-```
-                    mavros_bridge.py  (HoloOcean + physics + sensor emulation)
-                          │ publishes the vehicle's exact topics
-      /mavros/imu/data  /dvl/twist  /mavros/global_position/rel_alt  ...
-                          ▼
-                    bluerov_dr dead_reckon        (the lab's code, unmodified)
-                          │ /deadreckon/odom      (the robot's belief)
-                          ▼
-                    YOUR CONTROLLER               (the part you add)
-                          │ /cmd_vel              (TwistStamped velocity setpoint)
-                          ▼
-                    bridge --control  (inner velocity loop → thrusters → physics)
-```
-
-Ground truth is on `/holoocean/ground_truth` (sim-only). Controllers must
-steer from `/deadreckon/odom`, never from truth — same information diet as the
-real vehicle.
-
-## Plugging in a controller (the main event)
-
-You do NOT write ROS code. `sim/lab_controller_adapter.py` owns topics, the
-course, depth hold, and sign conventions. You implement one class:
-
-```python
-# my_anfis.py  (anywhere on PYTHONPATH; weights file next to it)
-class AnfisController:
-    cruise = 0.3                      # m/s, optional (else --cruise)
-
-    def __init__(self):
-        self.net = load_my_weights("anfis_weights.pt")
-
-    def reset(self):                  # optional, called once at start
-        pass
-
-    def compute(self, obs) -> float:  # return yaw-rate, + = turn left (CCW)
-        return float(self.net(obs.dist_error, obs.theta_far, obs.theta_near))
-```
-
-`obs` carries the anfis_rl-style state — `dist_error` (signed cross-track, m,
-+ = left of path), `theta_near` (heading error to path tangent), `theta_far`
-(heading error to current waypoint), plus raw `x, y, yaw, t`. Full contract in
-the adapter's docstring.
-
-Run it:
 ```bash
-$PY lab_controller_adapter.py --law my_anfis:AnfisController
+source /opt/ros/humble/setup.bash
+cd sim
+PY=~/holoocean-env/bin/python          # your venv's python
 ```
 
-**Yaw sign:** the adapter applies `--yaw-sign -1` by default (the vehicle's
-yaw convention is inverted — measured, confirmed in our own EKF source). If
-your controller was trained ON the real vehicle it already speaks vehicle
-convention → run it with `--yaw-sign 1`. Decide per controller with a bench
-test before trusting any results.
+## The mental model (30 seconds)
 
-**Add it to the benchmark:** edit `CONTROLLERS` in
-`scripts/run_benchmark_intex.sh` (swap the `waypoint_controller.py` line for
-the adapter invocation), then:
+```
+   mavros_bridge.py  — runs HoloOcean + physics, publishes the vehicle's exact topics
+        │   /mavros/imu/data   /dvl/twist   /mavros/global_position/rel_alt ...
+        ▼
+   bluerov_dr dead_reckon  — the lab's estimator, unmodified
+        │   /deadreckon/odom          (the robot's belief)
+        ▼
+   a controller (waypoint_controller.py)  — steers from the belief
+        │   /cmd_vel                  (velocity setpoint)
+        ▼
+   bridge --control  — inner velocity loop → thrusters → physics
+```
+
+Ground truth is published on `/holoocean/ground_truth` (sim-only). Controllers
+read `/deadreckon/odom`, never truth — same information the real vehicle has.
+
+## 1. Just run the vehicle
+
 ```bash
-bash scripts/run_benchmark_intex.sh     # ~2.5 min per controller per seed
+# swims a scripted path in the Intex pool twin, publishing real-format topics
+$PY mavros_bridge.py --headless --move --pool intex --duration 60
+
+# watch the data (another terminal):
+ros2 topic echo /mavros/imu/data
 ```
-Ranking table + figure land in the output dir. Use ≥4 seeds for anything you
-intend to quote.
 
-## The standard workflows
+Useful flags: `--pool intex` (spawn in the pool twin) · `--no-noise` (clean
+data) · `--replay prof.npz` (replay a real recording's commands + measured
+rates + depth) · `--control` (listen on /cmd_vel) · `--capture DIR` (save
+chase-camera frames) · `--duration N`.
 
-| I want to… | run |
-|---|---|
-| rank controllers in the pool twin | `scripts/run_benchmark_intex.sh` |
-| score sim realism vs real recordings | `scripts/run_tub_campaign.sh` (fidelity scorecard, conformal criterion) |
-| re-derive the verdict rule / thresholds | `sim/method_selection_study.py` |
-| watch a run (camera + truth-vs-DR overhead + live controller decisions) | bridge `--capture DIR` + `waypoint_controller.py --log dec.csv` + `sim_traj_recorder.py`, then `sim/compose_decision_video.py RUN_DIR out.mp4` |
-| pool footage / containment check | `sim/indoor_pool_capture.py out 100` |
-| sim-vs-real ranking correlation (the paper number) | `sim/score_correlation.py <sim_dir> <real_dir>` |
+## 2. End-to-end verification suites
+
+```bash
+bash scripts/run_holoocean_verify.sh    # bridge + topic checks + dead_reckon (simple mode)
+bash scripts/run_ekf_verify.sh          # same, EKF mode (deployed vehicle config)
+bash scripts/run_closedloop_test.sh     # full loop: sensors → DR → controller → sim
+bash scripts/run_replay_baseline.sh     # replay a real bag, compare DR vs vendor estimate
+```
+
+Each script's header says what it needs (e.g. `bluerov_dr` cloned next door)
+and where results land.
+
+## 3. Controller-ranking benchmark (in the pool twin)
+
+```bash
+bash scripts/run_benchmark_intex.sh
+# then rank:
+$PY score_ranking.py <output_dir>       # table + ranking.png
+```
+
+6 reference controllers × seeds, closed-loop on DR feedback, ranked by the von
+Benzon RMSE/IAE metrics against the seed-to-seed noise floor. ~2.5 min per run.
+
+## 4. Fidelity scoring (how real is the sim data?)
+
+```bash
+# campaign: replay real recordings through the twin, then score vs the
+# real-to-real reference floor (conformal criterion, 41 metrics):
+bash scripts/run_tub_campaign.sh
+# or score any sim-run dir against any real npz dir directly:
+$PY fidelity_scorecard.py --real <real_npz_dir>/*.npz --sim <sim_dir>/*.npz --out card
+```
+
+New real bag → npz first: `python3 tools/bag_to_npz.py <bag_dir> out.npz`.
+Current state of the art: 38/41. If you change ANY physics or noise constant,
+rerun the campaign — the scorecard decides, never your eyes.
+
+## 5. The decision video (camera + truth-vs-DR + live controller decisions)
+
+```bash
+OUT=~/data/decision_run; mkdir -p $OUT/frames
+$PY mavros_bridge.py --headless --control --pool intex --capture $OUT/frames --duration 100 &
+# (wait for topics) then, each in its own terminal:
+python3 <bluerov_dr>/dead_reckon.py --ros-args -p estimator_mode:=legacy_integrator &
+$PY waypoint_controller.py --law p --yaw-sign -1 --log $OUT/decisions.csv &
+$PY sim_traj_recorder.py $OUT &
+# when the bridge exits, compose the three-panel mp4:
+$PY compose_decision_video.py $OUT $OUT/decision_view.mp4
+```
+
+Output: chase camera | overhead with TRUTH vs DR-belief trails | live telemetry
+of every decision the controller made.
+
+## 6. Footage / containment check
+
+```bash
+$PY indoor_pool_capture.py out_frames 100   # chase gif/stills + track CSV
+                                            # prints containment + wall clearance
+```
+
+## 7. Statistical tooling (reproduce the paper numbers)
+
+```bash
+$PY threshold_study.py <real_npz_dirs>       # criterion calibration (conformal vs MWU)
+$PY method_selection_study.py --real <dirs> --hist <old_campaign_dirs> --final <sim_dir>
+                                             # AUC bracket + close/unsure/divergent verdicts
+$PY score_correlation.py <sim_dir> <real_dir>  # sim-vs-real ranking correlation
+$PY tubtest_floats.py unarmed.npz armed.npz    # sensor-vs-vibration noise decomposition
+$PY tub_sysid.py <bag> surge|sway|heave|yaw    # steady-state dynamics check
+```
 
 ## Things that WILL bite you (read once, save hours)
 
 - **One bridge at a time.** Concurrent bridges publish to the same topics and
-  poison every consumer. Check `pgrep -f "[m]avros_bridge"` first — and note
-  the bracket: a plain pgrep matches your own ssh/script text.
-- **Run campaigns detached** (`nohup … &` on the sim machine). A dropped ssh
-  kills foreground runs; it has eaten whole campaigns.
-- **Never judge a change by eye.** Every physics/noise edit → rerun the
-  campaign → scorecard decides. Sign-gate scripts abort before wasting an hour
-  if a convention is wrong — keep that pattern.
-- **Conventions** (all measured, all already handled — don't "fix" them):
-  IMU gravity sign-flip; acceleration control scheme is engine index 2; DVL
-  wire format is FRD with a −1.848° mount yaw and a lever arm; yaw command
-  convention inverted (MAVLink CW+ vs ROS CCW+); this vehicle's motor
+  poison every consumer. Check first — with the bracket trick, since a plain
+  pgrep matches your own command text: `pgrep -f "[m]avros_bridge"`.
+- **Run long campaigns detached** (`nohup … &` on the sim machine). A dropped
+  ssh kills foreground runs; it has eaten whole campaigns.
+- **Conventions are measured — don't "fix" them:** IMU gravity sign-flip;
+  acceleration control scheme is engine index 2 (docs list it wrong); DVL wire
+  format is FRD with a −1.848° mount yaw and a lever arm; yaw command
+  convention inverted (controllers run `--yaw-sign -1`); this vehicle's motor
   directions live in ESC config so logged PWMs are direction-less; the DVL
-  stream publishes each measurement twice. Details + provenance: README
-  "Conventions & gotchas" and constants' comments in `sim/mavros_bridge.py`.
-- **The physics engine sleeps slow bodies** and then ignores forces; keep the
-  teleport watchdog if you write new control loops.
+  stream publishes each measurement twice. Provenance for every constant is in
+  the comments at the top of `sim/mavros_bridge.py` / `sim/bluerov2_standard_model.py`.
+- **The physics engine sleeps slow bodies** and then ignores forces — the pool
+  scripts carry a teleport watchdog; keep it in any new control loop.
 - **The course is 2.0 × 0.6 m** (`WAYPOINTS` in `sim/waypoint_controller.py`,
-  `SQUARE` in `sim/score_ranking.py`). It's the largest course that fits the
-  real pool with clearance. Change it in BOTH places or nowhere — sim and the
-  real session must run the identical course.
+  `SQUARE` in `sim/score_ranking.py`) — the largest that fits the real 4×2 m
+  pool. Change it in both places or neither.
 - Keep server hostnames / netids out of this public repo.
 
-## Data (ask a teammate for access paths)
+## Data locations (ask a teammate for access)
 
-Real recordings live in the lab Box ("Deliverables-underwater"); working
-copies + campaign outputs on the lab GPU server under `~/data/` (real bags as
-npz in `real_npz*`/`tubtest_npz`, campaign runs in `mc_runs*`, scorecards as
-`scorecard*.json`). `tools/bag_to_npz.py` converts a new bag; the fidelity
-scorecard consumes npz.
-
-## What the project needs from you specifically
-
-1. **The controllers**: ANFIS-DDPG / fuzzy / PPO code + trained weights, and
-   which versions are current (is `anfis_rl` the ANFIS base?). Each becomes
-   one adapter class as above.
-2. Then: sim benchmark with the real controllers (≥4 seeds) → freeze that
-   ranking (pre-registration) → **real pool session** per
-   [docs/real_ranking_protocol.md](docs/real_ranking_protocol.md) (≥3 repeats
-   per controller) → `score_correlation.py` → the paper's headline number.
-3. Two-minute favors when near the vehicle: QGroundControl screenshots of
-   `MOT_*_DIRECTION` + `AHRS_ORIENTATION`; re-upload the two truncated Box
-   bags (Pipeline `15_28_11`, River Test 1 `15_39_49`); log `rc/out` at
-   ≥10 Hz in future recordings.
-
-Questions: git blame is thorough — every constant's comment says where its
-value came from and what run verified it.
+Real recordings: the lab Box ("Deliverables-underwater"). Working copies +
+outputs: the lab GPU server under `~/data/` — real bags as npz in
+`real_npz*` / `tubtest_npz`, sim campaigns in `mc_runs*`, scorecards as
+`scorecard*.json`, benchmarks in `benchmark_*`.
