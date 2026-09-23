@@ -32,6 +32,9 @@ def yaw_from_quat(q):
 class Ctrl:
     def __init__(self, node, a):
         self.node, self.a = node, a
+        self.logf = open(a.log, 'w') if a.log else None
+        if self.logf:
+            self.logf.write('t,wp,x,y,yaw,err,fwd,yawcmd\n')
         self.pub = node.create_publisher(TwistStamped, '/cmd_vel', 10)
         node.create_subscription(Odometry, '/deadreckon/odom', self.on_odom, 10)
         self.wp = 0
@@ -85,6 +88,12 @@ class Ctrl:
         cmd.twist.linear.z = float(np.clip(0.6 * (DEPTH_TARGET - z), -0.3, 0.3))
         cmd.twist.angular.z = float(np.clip(yaw_cmd, -0.8, 0.8))
         self.pub.publish(cmd)
+        if self.logf:
+            st = msg.header.stamp
+            self.logf.write('%.3f,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f\n' % (
+                st.sec + st.nanosec * 1e-9, self.wp, x, y, yaw, err,
+                cmd.twist.linear.x, cmd.twist.angular.z))
+            self.logf.flush()
 
 
 def main():
@@ -96,6 +105,8 @@ def main():
     ap.add_argument('--law', choices=['p', 'pd', 'pursuit', 'smc'], default='p')
     ap.add_argument('--yaw-sign', type=float, default=1.0,
                     help='control-path heading convention (+1 or -1)')
+    ap.add_argument('--log', default=None,
+                    help='CSV of every decision: t,wp,x,y,yaw,err,fwd,yawcmd')
     # SMC baseline (von Benzon 2022 sec 7.1 / Table 6 Yaw-row defaults)
     ap.add_argument('--smc-c0', type=float, default=2.0)
     ap.add_argument('--smc-alpha', type=float, default=0.1)

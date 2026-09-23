@@ -109,7 +109,7 @@ def main():
             s["Hz"] = scenario["ticks_per_sec"]
     agent["sensors"].append({
         "sensor_type": "RGBCamera", "sensor_name": "ChaseCam",
-        "location": [-1.1, 0.0, 0.1], "rotation": [0.0, 6.0, 0.0],
+        "location": [-0.75, 0.0, 0.32], "rotation": [0.0, 18.0, 0.0],  # short high boom: stays inside the pool at corner pivots
         "Hz": FPS, "configuration": {"CaptureWidth": WIDTH, "CaptureHeight": HEIGHT},
     })
     # stationary corner cam — KNOWN FLAKY in this tight pool (the tripod agent
@@ -117,7 +117,7 @@ def main():
     scenario["agents"].append({
         "agent_name": "cam0", "agent_type": "BlueROV2",
         "control_scheme": 2,
-        "location": [X_OFF + 0.45, -0.7, -0.62], "rotation": [0, 0, 20],
+        "location": [X_OFF + 0.5, -0.65, -0.55], "rotation": [0, 0, 18],
         "sensors": [{
             "sensor_type": "RGBCamera", "sensor_name": "WideCam",
             "location": [0.4, 0.0, 0.05], "rotation": [0.0, -5.0, 0.0],  # deeper + down-pitch: shallow cam saw only the Snell window/sky
@@ -134,6 +134,9 @@ def main():
 
     with holoocean.make(scenario_cfg=scenario, show_viewport=False) as env:
         spawn_pool(env)
+        # prop spawning can shove the tripod agent — put it back afterwards
+        env.agents["cam0"].teleport(location=[X_OFF + 0.5, -0.65, -0.55],
+                                    rotation=[0, 0, 18])
         while t < duration:
             if last_dyn is not None:
                 quat = last_dyn[DYN_QUAT]

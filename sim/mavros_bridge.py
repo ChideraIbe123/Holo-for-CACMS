@@ -582,6 +582,8 @@ def main():
     parser.add_argument('--control', action='store_true',
                         help='closed-loop: drive the vehicle from /cmd_vel velocity setpoints '
                              '(external controller closes the loop via /deadreckon/odom)')
+    parser.add_argument('--capture', default=None, metavar='DIR',
+                        help='save chase-camera frames (sim-time-stamped PNGs) to DIR')
     parser.add_argument('--pool', choices=['intex'], default=None,
                         help='spawn the lab pool geometry and start inside it '
                              '(benchmark runs in the actual test environment)')
@@ -664,6 +666,16 @@ def main():
                 agent['location'][2] = min(replay['z0'], -0.5)
         print(f"[bridge] replaying real command profile: {args.replay} "
               f"({len(replay['t'])} cmds, {replay['t'][-1]:.0f}s, spawn z {replay['z0']:.2f})")
+
+    if args.capture:
+        os.makedirs(args.capture, exist_ok=True)
+        for agent in scenario['agents']:
+            if agent['agent_name'] == AGENT_NAME:
+                agent['sensors'].append({
+                    'sensor_type': 'RGBCamera', 'sensor_name': 'ChaseCam',
+                    'location': [-0.75, 0.0, 0.32], 'rotation': [0.0, 18.0, 0.0],
+                    'Hz': 5, 'configuration': {'CaptureWidth': 960, 'CaptureHeight': 540}})
+        print(f'[bridge] capturing chase frames -> {args.capture}')
 
     if args.pool == 'intex':
         import intex_pool
@@ -774,6 +786,11 @@ def main():
                 state = env.tick()
                 t = float(state.get('t', t + 1.0 / ticks_per_sec))
                 bridge.sim_time = t
+                if args.capture and 'ChaseCam' in state:
+                    from PIL import Image as _Img
+                    _im = np.asarray(state['ChaseCam'])[:, :, :3][:, :, ::-1]
+                    _Img.fromarray(_im.astype(np.uint8)).save(
+                        os.path.join(args.capture, f'frame_{t:08.2f}.png'))
                 if 'DynamicsSensor' in state:
                     last_dyn = np.asarray(state['DynamicsSensor'], dtype=float)
 
