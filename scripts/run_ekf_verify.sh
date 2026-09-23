@@ -19,7 +19,9 @@ done
 [ -z "$found" ] && { echo "[ekf] TOPIC NEVER APPEARED"; kill $BRIDGE; exit 1; }
 
 echo "[ekf] starting dead_reckon in st_car_ekf mode (default)..."
-python3 ~/projects/bluerov-tools/bluerov_dr/bluerov_dr/dead_reckon.py > dr_ekf.log 2>&1 &
+# v16: the bridge publishes /dvl/twist in the real RAW wire convention; run the
+# node exactly as deployed on the vehicle (st_car_ekf.yaml sets paper_raw_to_base).
+python3 ~/projects/bluerov-tools/bluerov_dr/bluerov_dr/dead_reckon.py --ros-args -p dvl_frame_transform:=paper_raw_to_base > dr_ekf.log 2>&1 &
 DR=$!
 sleep 8
 

@@ -6,7 +6,8 @@ source /opt/ros/humble/setup.bash
 export PYTHONPATH="$HOME/tmp/imu_verify/stubs:$PYTHONPATH"
 
 echo "[verify] starting HoloOcean bridge (headless, scripted motion)..."
-~/projects/holoocean-env/bin/python mavros_bridge.py --headless --move > bridge.log 2>&1 &
+# v16: legacy integrator predates the raw-DVL transform -> feed it base-frame FLU
+~/projects/holoocean-env/bin/python mavros_bridge.py --headless --move --dvl-frame flu > bridge.log 2>&1 &
 BRIDGE=$!
 
 echo "[verify] waiting for /mavros/imu/data (up to 5 min for first Unreal boot)..."
