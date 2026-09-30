@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Holo-for-CACMS: A Statistically Validated BlueROV2 Digital Twin in HoloOcean"
+authors:
+  - family-names: "Ibe"
+    given-names: "Chidera Onochie"
+    affiliation: "Autonomous & Unmanned Vehicle Systems Laboratory, University of Illinois Urbana-Champaign"
+type: software
+repository-code: "https://github.com/ChideraIbe123/Holo-for-CACMS"
+license: MIT
+version: 1.0.0
+date-released: 2026-09-30
+keywords:
+  - BlueROV2
+  - digital twin
+  - underwater robotics
+  - HoloOcean
+  - simulator validation
+  - dead reckoning
+  - controller benchmark

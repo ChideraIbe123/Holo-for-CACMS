@@ -63,6 +63,22 @@ def spearman(a, b):
     return float((ra * rb).sum() / d) if d > 0 else 0.0
 
 
+def mmrv(sim_vals, real_vals):
+    """Mean Maximum Rank Violation (SIMPLER, Li et al. 2024, arXiv:2405.05941):
+    for each policy, the largest real-performance margin by which the sim
+    mis-orders it against any other; averaged. 0 = orderings agree; units =
+    the metric's own (here RMSE, m). Lower is better — reported alongside
+    Spearman because the manipulation community's evaluators standardize on it."""
+    s, r = np.asarray(sim_vals, float), np.asarray(real_vals, float)
+    n = len(s)
+    worst = np.zeros(n)
+    for i in range(n):
+        for j in range(n):
+            if (s[i] - s[j]) * (r[i] - r[j]) < 0:      # sim orders the pair wrongly
+                worst[i] = max(worst[i], abs(r[i] - r[j]))
+    return float(worst.mean())
+
+
 def kendall(a, b):
     n = len(a)
     conc = disc = 0
@@ -176,9 +192,11 @@ def report(stats_sim, stats_real, label_a="sim", label_b="real"):
 
     rho, p = chance_p(rmse_a, rmse_b)
     tau = kendall(rmse_a, rmse_b)
+    rv = mmrv(rmse_a, rmse_b)
     lo, med, hi = noise_floor_band(stats_sim, stats_real, names)
 
     print(f"\nSpearman rho = {rho:+.3f}   Kendall tau = {tau:+.3f}"
+          f"   MMRV = {rv:.4f} (same units as the metric; 0 = orderings agree)"
           f"   (n = {len(names)} controllers)")
     print(f"chance test: exact P(random ranking correlates >= observed) = {p:.4f}"
           f" -> {'BETTER THAN CHANCE' if p < 0.05 else 'not distinguishable from chance'}")
@@ -205,6 +223,9 @@ def self_test():
     assert abs(spearman(a, b) - 0.9) < 1e-12
     # ties average: [1, 2.5, 2.5, 4]
     assert np.allclose(rankdata([1, 2, 2, 3]), [1, 2.5, 2.5, 4])
+    assert mmrv(a, a) == 0.0
+    assert mmrv(a, a[::-1]) > 0.05           # fully reversed -> large violations
+    assert abs(mmrv([1, 2], [1, 2])) < 1e-12
     _, p_same = chance_p(np.array(a), np.array(a))
     assert p_same <= 1 / 100  # perfect agreement ~ 1/n! + ties
     # noise band sanity: tiny spreads -> band hugs +1
