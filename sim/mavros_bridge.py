@@ -582,6 +582,10 @@ def main():
     parser.add_argument('--control', action='store_true',
                         help='closed-loop: drive the vehicle from /cmd_vel velocity setpoints '
                              '(external controller closes the loop via /deadreckon/odom)')
+    parser.add_argument('--no-servos', action='store_true',
+                        help='ablation: disable the rotational/heave rate servos '
+                             '(quantifies how much fidelity comes from trajectory '
+                             'matching vs sensor modeling)')
     parser.add_argument('--capture', default=None, metavar='DIR',
                         help='save chase-camera frames (sim-time-stamped PNGs) to DIR')
     parser.add_argument('--pool', choices=['intex'], default=None,
@@ -652,6 +656,11 @@ def main():
 
     node.get_logger().info(f'Starting HoloOcean ({SCENARIO_JSON}), headless={args.headless}')
     import time as _time
+    global YAWREF_GAIN, ATTREF_GAIN, HEAVEREF_GAIN
+    if args.no_servos:
+        YAWREF_GAIN = ATTREF_GAIN = HEAVEREF_GAIN = 0.0
+        print('[bridge] ABLATION: rate/heave servos disabled')
+
     replay = None
     if args.replay:
         rp = np.load(args.replay)
