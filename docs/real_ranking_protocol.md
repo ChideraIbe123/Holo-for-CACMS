@@ -59,7 +59,7 @@ to decorrelate battery drain from controller identity):
 5. Log: battery voltage, tether behavior, any pilot intervention (a run with intervention
    is VOID — rerun it).
 
-**Repeats: ≥ 2 per controller (3 preferred).** The repeat-to-repeat spread IS the real-side
+**Repeats: 4 per controller** (power analysis `power_analysis.py`: 3 repeats gives only 0.56-0.80 detection power depending on real-side spread; 4 recovers 0.61-0.84). The repeat-to-repeat spread IS the real-side
 reference floor; with 1 run per controller the floor is unmeasurable and the correlation
 verdict loses its error bar.
 
