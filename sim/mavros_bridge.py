@@ -590,7 +590,7 @@ def main():
                         help='publish a forward camera on /camera/image_raw (bgr8, 768x432, 5 Hz) '
                              'for camera-driven controllers such as real/llm_pilot.py. Off by default.')
     parser.add_argument('--pipe', action='store_true',
-                        help='with --pool intex: lay a dark 2.4 m pipe on the pool floor. Off by default.')
+                        help='with --pool intex: lay a dark 1.8 m pipe on the pool floor. Off by default.')
     parser.add_argument('--capture', default=None, metavar='DIR',
                         help='save chase-camera frames (sim-time-stamped PNGs) to DIR')
     parser.add_argument('--pool', choices=['intex'], default=None,

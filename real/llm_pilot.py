@@ -25,6 +25,7 @@ Usage:
   python3 llm_pilot.py --check                      # one test call, no ROS, no motion
   python3 llm_pilot.py --goal "Follow the pipe on the floor to its far end, then stop."
   python3 llm_pilot.py --dry-run --goal "..."       # decide and log, publish zeros only
+  python3 llm_pilot.py --frames DIR --goal "..."    # offline: judge recorded frames, no ROS
 Every step is saved under --out: the exact JPEG sent, the decision, latency, token use.
 """
 import argparse
@@ -53,8 +54,10 @@ action. The robot carries out that action, comes to a stop, and then you are sho
 is stationary whenever you are looking, so take the view at face value.
 
 The action has three numbers:
-- forward: speed in metres per second, from -0.15 (slowly backward) to 0.25. At 0.2 for 1.5 seconds the \
-robot advances roughly 0.3 m. Use 0 to turn on the spot.
+- forward: speed in metres per second, from -0.15 (slowly backward) to 0.25. The robot takes a moment \
+to get moving, so short gentle steps cover very little ground: 0.12 for 1 second moves it under 0.1 m, while \
+0.25 for 2 seconds moves it roughly 0.4 m. When the way ahead is clearly open, use the larger steps. Use 0 \
+to turn on the spot.
 - yaw_rate_cw: turn rate in radians per second, positive = turn right (clockwise seen from above), \
 negative = turn left, from -0.5 to 0.5. At 0.4 for 1.5 seconds the robot turns roughly 35 degrees.
 - hold_s: how long to apply the action, from 0.3 to 2.0 seconds.
@@ -64,7 +67,11 @@ How to drive well here:
 - The water blurs and tints things, and the surface above acts like a mirror, so reflections of objects \
 can appear in the top of the frame. Trust what is on the floor and walls over what appears near the surface.
 - If you cannot see what you need, turn on the spot (forward 0) to look around rather than driving blind.
-- If a wall fills most of the view or looks closer than about half a metre, do not drive toward it.
+- Judge how far away a wall is by where its base meets the floor, not by how dark or large it looks. \
+Only when the base of the wall has dropped into the bottom fifth of the frame is the wall close \
+(about a metre or less): then do not drive toward it. If the base is anywhere above that, there is room.
+- Distances are hard to judge by eye here. When a goal can be checked against something visible, such \
+as an object reaching the bottom edge of the frame, use that rather than a guessed distance.
 - The robot drifts a little and does not hold a perfectly straight line, so correct your heading often.
 - When the goal is achieved, or you judge it cannot be achieved safely, set done to true with forward 0 \
 and yaw_rate_cw 0.
@@ -132,8 +139,12 @@ def load_dotenv():
     return None
 
 
-def user_text(goal, step, elapsed, history):
+def user_text(goal, step, elapsed, history, travel=None):
     lines = [f"Goal: {goal}", f"Step {step}, {elapsed:.0f} s since the run started."]
+    if travel is not None:
+        lines.append(f"Odometry since the start: moved about {travel[0]:.2f} m in total and turned "
+                     f"{abs(travel[1]):.0f} degrees {'right' if travel[1] >= 0 else 'left'} of the starting heading. "
+                     f"Odometry is approximate but far better than judging distance by eye in this water.")
     if history:
         lines.append("Your most recent actions, oldest first:")
         for h in history:
@@ -168,7 +179,7 @@ class AnthropicBrain:
             raise PilotError(f"no usable Anthropic credentials: {e}", fatal=True)
         self.model, self.effort, self.use_fallbacks = model, effort or "low", use_fallbacks
 
-    def decide(self, jpeg_bytes, goal, step, elapsed, history):
+    def decide(self, jpeg_bytes, goal, step, elapsed, history, travel=None):
         sdk = self.sdk
         request = dict(
             model=self.model,
@@ -179,7 +190,7 @@ class AnthropicBrain:
             messages=[{"role": "user", "content": [
                 {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                              "data": base64.standard_b64encode(jpeg_bytes).decode("ascii")}},
-                {"type": "text", "text": user_text(goal, step, elapsed, history)},
+                {"type": "text", "text": user_text(goal, step, elapsed, history, travel)},
             ]}],
         )
         t0 = time.monotonic()
@@ -233,7 +244,7 @@ class OpenAIBrain:
         self.client = openai.OpenAI(**kwargs)
         self.model, self.effort = model, effort
 
-    def decide(self, jpeg_bytes, goal, step, elapsed, history):
+    def decide(self, jpeg_bytes, goal, step, elapsed, history, travel=None):
         sdk = self.sdk
         b64 = base64.standard_b64encode(jpeg_bytes).decode("ascii")
         request = dict(
@@ -241,7 +252,7 @@ class OpenAIBrain:
             instructions=SYSTEM_PROMPT,
             input=[{"role": "user", "content": [
                 {"type": "input_image", "image_url": f"data:image/jpeg;base64,{b64}"},
-                {"type": "input_text", "text": user_text(goal, step, elapsed, history)},
+                {"type": "input_text", "text": user_text(goal, step, elapsed, history, travel)},
             ]}],
             text={"format": {"type": "json_schema", "name": "rov_action", "strict": True,
                              "schema": ACTION_SCHEMA}},
@@ -328,6 +339,43 @@ def run_check(a):
           f"hold {action['hold_s']} done {action['done']}")
 
 
+def run_frames(a):
+    """Show the model recorded frames, one independent decision each. No ROS, no vehicle.
+    Answers 'what would it do if it saw this?' for real footage. Each frame is judged on its
+    own (no action history), because recorded frames do not respond to the model's actions."""
+    import glob
+    import numpy as np
+    from PIL import Image
+    paths = sorted(p for p in glob.glob(os.path.join(a.frames, "*")) if p.lower().endswith((".png", ".jpg", ".jpeg")))
+    paths = paths[::max(1, a.every)][:a.max_steps]
+    if not paths:
+        sys.exit(f"no .png/.jpg frames in {a.frames}")
+    try:
+        brain = make_brain(a)
+    except PilotError as e:
+        sys.exit(str(e))
+    os.makedirs(a.out, exist_ok=True)
+    print(f"offline: {len(paths)} frames from {a.frames}  provider={brain.provider} model={brain.model}\nGoal: {a.goal}\n")
+    with open(os.path.join(a.out, "steps.jsonl"), "w") as f:
+        for i, p in enumerate(paths, 1):
+            rgb = np.asarray(Image.open(p).convert("RGB"))
+            jpeg = encode_jpeg(rgb, a.width, a.quality)
+            with open(os.path.join(a.out, f"frame_{i:04d}.jpg"), "wb") as jf:
+                jf.write(jpeg)
+            rec = {"step": i, "source": os.path.basename(p)}
+            try:
+                action, info = brain.decide(jpeg, a.goal, 1, 0.0, [])
+                rec.update(status="ok", **action, **info)
+                print(f"{os.path.basename(p):<22} {info['latency_s']:4.1f} s  fwd {action['forward']:+.2f}  "
+                      f"turn {action['yaw_rate_cw']:+.2f}  hold {action['hold_s']:.1f}  done={str(action['done']):<5}  "
+                      f"SEES: {action['seeing']}\n{'':<22} WHY: {action['why']}")
+            except PilotError as e:
+                rec.update(status="error", error=str(e))
+                print(f"{os.path.basename(p):<22} ERROR: {e}")
+            f.write(json.dumps(rec) + "\n")
+    print(f"\nsaved to {a.out}")
+
+
 def run_ros(a):
     import numpy as np
     import rclpy
@@ -359,7 +407,24 @@ def run_ros(a):
         S["frame_t"] = time.monotonic()
 
     def on_odom(msg):
-        S["z"] = msg.pose.pose.position.z
+        p, q = msg.pose.pose.position, msg.pose.pose.orientation
+        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        S["z"] = p.z
+        if S["t0"] is None:
+            S["odo"] = None                      # travel is counted from the first step
+            return
+        if S.get("odo") is None:
+            S["odo"] = {"x": p.x, "y": p.y, "yaw0": yaw, "dist": 0.0, "yaw": yaw}
+        o = S["odo"]
+        o["dist"] += math.hypot(p.x - o["x"], p.y - o["y"])
+        o["x"], o["y"], o["yaw"] = p.x, p.y, yaw
+
+    def travel_now():
+        o = S.get("odo")
+        if not o:
+            return None
+        d = math.atan2(math.sin(o["yaw"] - o["yaw0"]), math.cos(o["yaw"] - o["yaw0"]))
+        return (o["dist"], -math.degrees(d))     # positive = turned right (clockwise)
 
     node.create_subscription(Image, a.image_topic, on_image, qos_profile_sensor_data)
     node.create_subscription(Odometry, "/deadreckon/odom", on_odom, 50)
@@ -374,9 +439,9 @@ def run_ros(a):
             m.twist.linear.z = clamp(0.6 * (a.depth_target - S["z"]), -0.3, 0.3)
         pub.publish(m)
 
-    def think(jpeg, step, elapsed, history):
+    def think(jpeg, step, elapsed, history, travel):
         try:
-            action, info = brain.decide(jpeg, a.goal, step, elapsed, history)
+            action, info = brain.decide(jpeg, a.goal, step, elapsed, history, travel)
             result = ("ok", action, info)
         except PilotError as e:
             result = ("fatal" if e.fatal else "error", str(e), None)
@@ -422,7 +487,7 @@ def run_ros(a):
             with open(os.path.join(a.out, f"frame_{S['step']:04d}.jpg"), "wb") as f:
                 f.write(jpeg)
             S["phase"], S["think_t"] = "think", now
-            threading.Thread(target=think, args=(jpeg, S["step"], elapsed, list(S["history"])),
+            threading.Thread(target=think, args=(jpeg, S["step"], elapsed, list(S["history"]), travel_now()),
                              daemon=True).start()
             return
         if S["phase"] == "think":
@@ -505,9 +570,14 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="decide and log but publish zero motion")
     ap.add_argument("--out", default="llm_runs/run")
     ap.add_argument("--check", action="store_true", help="one test call to the model, then exit")
+    ap.add_argument("--frames", default=None, metavar="DIR",
+                    help="offline: judge each recorded .png/.jpg in DIR independently. No ROS, no vehicle.")
+    ap.add_argument("--every", type=int, default=1, help="with --frames: use every Nth image")
     a = ap.parse_args()
     if a.check:
         run_check(a)
+    elif a.frames:
+        run_frames(a)
     else:
         run_ros(a)
 

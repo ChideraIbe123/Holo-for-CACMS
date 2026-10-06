@@ -34,15 +34,15 @@ def spawn_pool(env):
                        material="white")
 
 
-# A pipe for camera-driven tests (mavros_bridge --pipe). Dark, 2.4 m long, 0.1 m across,
+# A pipe for camera-driven tests (mavros_bridge --pipe). Dark, 1.8 m long, 0.1 m across,
 # resting on the floor at 12 degrees to the pool's long axis. It starts just ahead and to
 # the left of the spawn point, like the real "pipeline at an angle in the middle of the
 # pool". Built from short axis-aligned segments: spawn_prop stood a single rotated box on
 # its end (observed 2026-10-06), so no rotation is used.
-PIPE_LEN = 2.4
+PIPE_LEN = 1.8        # ends mid-pool, about 0.9 m short of the far wall
 PIPE_YAW_DEG = 12.0
 PIPE_START = [X_OFF + 1.3, -0.15]      # spawn is at X_OFF + 1.0, y = -0.3
-PIPE_SEGMENTS = 24
+PIPE_SEGMENTS = 18
 
 
 def pipe_points():

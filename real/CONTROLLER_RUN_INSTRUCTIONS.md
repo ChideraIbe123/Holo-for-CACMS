@@ -227,11 +227,34 @@ The pilot picks the provider from whichever key it finds; force one with `--prov
 `--check` also prints how long one reply takes. Measured with `gpt-6-astra`: 5 to 8 seconds
 and about 1,250 input tokens per step.
 
-**What to expect (simulator trials, 2026-10-06):** the model found the pipe and steered
-onto it, holding about 0.1 m to one side. It judged distance badly: it stopped after
-0.5 m, reporting the end of the pipe half a metre ahead when it was 2.3 m ahead. Without
-being told what the far wall was, it refused to move at all. Treat it as an experiment,
-start with `--dry-run`, and expect to word the goal carefully.
+**What to expect (2026-10-06).** In the simulator, with the goal worded as below, the
+model followed a 1.8 m pipe in 8 steps and 52 seconds, stayed within 0.09 m of it, and
+stopped within 0.1 m of the intended point. Shown 11 real frames from the March pipe
+recording, it chose to advance along the pipe in 8, and correctly chose to turn and look in
+the frames where no pipe was visible. It has not driven the real vehicle.
+
+**Word the goal with something visible, not a distance.** The model judges distance badly.
+Told "stop half a metre before the end" it stopped 2.3 m short. Told "stop when the far end
+of the pipe reaches the bottom edge of the frame" it stopped in the right place.
+
+Recommended goal for the pipe:
+```
+Follow the dark pipe lying on the pool floor to its far end, staying over it or right
+beside it. Stop when the far end of the pipe reaches the bottom edge of the frame or passes
+out of view below it.
+```
+
+**Three stages. Do them in order, and stop at the first one that looks wrong.**
+
+*Stage 1, offline, no ROV.* Show the model recorded frames and read what it would do:
+```bash
+python3 llm_pilot.py --frames <folder of .png or .jpg> --goal "<goal>" --out llm_runs/offline1
+```
+Each frame is judged on its own. Use this the moment the first camera frames of the day exist.
+
+*Stage 2, live dry run, ROV in the water but not moving.* Step 2 below.
+
+*Stage 3, live.* Step 3 below.
 
 **Run it:**
 1. Terminal B, converter with a longer run limit and a fence sized for free movement
@@ -241,12 +264,13 @@ start with `--dry-run`, and expect to word the goal carefully.
    ```
 2. Dry run first. The model decides and logs, but the ROV does not move:
    ```bash
-   python3 llm_pilot.py --dry-run --goal "Follow the pipe on the pool floor to its far end, then stop." --out llm_runs/dry1
+   python3 llm_pilot.py --dry-run --goal "<goal>" --out llm_runs/dry1
    ```
-   Read the printed decisions. If they make sense for what the camera shows, continue.
+   Read the printed decisions. Move the ROV by hand to a few spots (beside the pipe, facing a
+   wall, pipe out of view) and check the decision is sensible at each. If so, continue.
 3. Arm (`a` in Terminal B), then run it live, with a bag recording in another terminal:
    ```bash
-   python3 llm_pilot.py --depth-target -0.3 --goal "Follow the pipe on the pool floor to its far end, then stop." --out llm_runs/pipe1
+   python3 llm_pilot.py --depth-target -0.3 --goal "<goal>" --out llm_runs/pipe1
    ```
 4. It stops when the model says it is done, after 40 steps, or after 4 minutes.
    **SPACE in Terminal B stops it at any time.**
