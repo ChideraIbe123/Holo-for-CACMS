@@ -58,7 +58,7 @@ def main():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     out = tempfile.mkdtemp(prefix="llmtest_")
     env = dict(os.environ, ANTHROPIC_API_KEY="test-key-not-real")
-    proc = subprocess.Popen([sys.executable, os.path.join(HERE, "llm_pilot.py"), "--base-url", f"http://127.0.0.1:{PORT}",
+    proc = subprocess.Popen([sys.executable, os.path.join(HERE, "llm_pilot.py"), "--provider", "anthropic", "--base-url", f"http://127.0.0.1:{PORT}",
                              "--settle", "0.3", "--out", out, "--goal", "Follow the pipe.", "--max-errors", "3"],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     rclpy.init()

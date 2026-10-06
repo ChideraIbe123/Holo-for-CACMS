@@ -13,12 +13,13 @@ safety. /cmd_vel goes through cmdvel_to_manual.py like every other controller he
 its stick limits, geofence and SPACE stop all still apply. This node never arms,
 never talks to the autopilot, and stops publishing motion if the API fails.
 
-The model call uses the Anthropic SDK:
-  - model claude-opus-5-5 (change with --model)
-  - output constrained to a JSON schema (output_config.format), so the reply always parses
-  - effort "low": this is a small perception-to-action step and latency matters
-  - server-side refusal fallback, so a safety-classifier decline does not stall the run
-Credentials come from the environment (ANTHROPIC_API_KEY, or an `ant auth login` profile).
+Two model providers are supported, chosen by --provider or by which key is present:
+  openai     gpt-6-astra through the Responses API (key: OPENAI_API_KEY or OPENAI_KEY)
+  anthropic  claude-opus-5-5 through the Messages API, effort low, with server-side
+             refusal fallback (key: ANTHROPIC_API_KEY)
+Both constrain the reply to the same JSON schema, so it always parses. Keys are read
+from the environment or from a .env file next to this script, in its parent folder, or
+in the current folder. Never commit that file.
 
 Usage:
   python3 llm_pilot.py --check                      # one test call, no ROS, no motion
@@ -36,9 +37,7 @@ import sys
 import threading
 import time
 
-import anthropic
-
-MODEL = "claude-opus-5-5"
+DEFAULT_MODEL = {"anthropic": "claude-opus-5-5", "openai": "gpt-6-astra"}
 MAX_FORWARD = 0.25        # m/s
 MAX_YAW = 0.5             # rad/s
 MAX_HOLD = 2.0            # s
@@ -110,27 +109,67 @@ def sanitize(action):
     }
 
 
-class Brain:
-    """One model call per step. Holds no ROS state."""
+class PilotError(Exception):
+    """A model call that produced no usable action. fatal=True means retrying will not help."""
 
-    def __init__(self, model=MODEL, effort="low", timeout=20.0, use_fallbacks=True, base_url=None):
+    def __init__(self, message, fatal=False):
+        super().__init__(message)
+        self.fatal = fatal
+
+
+def load_dotenv():
+    """Read KEY=VALUE lines from the first .env found. Existing environment wins."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for d in (os.getcwd(), here, os.path.dirname(here)):
+        p = os.path.join(d, ".env")
+        if os.path.isfile(p):
+            for line in open(p):
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+            return p
+    return None
+
+
+def user_text(goal, step, elapsed, history):
+    lines = [f"Goal: {goal}", f"Step {step}, {elapsed:.0f} s since the run started."]
+    if history:
+        lines.append("Your most recent actions, oldest first:")
+        for h in history:
+            lines.append(f"- forward {h['forward']:+.2f} m/s, turn {h['yaw_rate_cw']:+.2f} rad/s, "
+                         f"for {h['hold_s']:.1f} s. You saw: {h['seeing']}")
+    else:
+        lines.append("This is the first frame.")
+    lines.append("Here is the current camera frame. Choose the next action.")
+    return "\n".join(lines)
+
+
+def parse_action(text):
+    try:
+        return sanitize(json.loads(text))
+    except (ValueError, KeyError, TypeError) as e:
+        raise PilotError(f"unusable reply: {e}")
+
+
+class AnthropicBrain:
+    """claude-opus-5-5 by default. One Messages API call per step."""
+    provider = "anthropic"
+
+    def __init__(self, model, effort, timeout, use_fallbacks=True, base_url=None):
+        import anthropic
+        self.sdk = anthropic
         kwargs = {"timeout": timeout, "max_retries": 0}   # we retry by looking again, not by waiting
         if base_url:
             kwargs["base_url"] = base_url
-        self.client = anthropic.Anthropic(**kwargs)
-        self.model, self.effort, self.use_fallbacks = model, effort, use_fallbacks
+        try:
+            self.client = anthropic.Anthropic(**kwargs)
+        except (anthropic.AnthropicError, TypeError) as e:
+            raise PilotError(f"no usable Anthropic credentials: {e}", fatal=True)
+        self.model, self.effort, self.use_fallbacks = model, effort or "low", use_fallbacks
 
     def decide(self, jpeg_bytes, goal, step, elapsed, history):
-        """-> (action dict, info dict). Raises anthropic errors and ValueError."""
-        lines = [f"Goal: {goal}", f"Step {step}, {elapsed:.0f} s since the run started."]
-        if history:
-            lines.append("Your most recent actions, oldest first:")
-            for h in history:
-                lines.append(f"- forward {h['forward']:+.2f} m/s, turn {h['yaw_rate_cw']:+.2f} rad/s, "
-                             f"for {h['hold_s']:.1f} s. You saw: {h['seeing']}")
-        else:
-            lines.append("This is the first frame.")
-        lines.append("Here is the current camera frame. Choose the next action.")
+        sdk = self.sdk
         request = dict(
             model=self.model,
             max_tokens=4000,
@@ -140,29 +179,117 @@ class Brain:
             messages=[{"role": "user", "content": [
                 {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                              "data": base64.standard_b64encode(jpeg_bytes).decode("ascii")}},
-                {"type": "text", "text": "\n".join(lines)},
+                {"type": "text", "text": user_text(goal, step, elapsed, history)},
             ]}],
         )
         t0 = time.monotonic()
-        if self.use_fallbacks:
-            resp = self.client.beta.messages.create(
-                betas=["server-side-fallback-2026-07-01"], fallbacks="default", **request)
-        else:
-            resp = self.client.messages.create(**request)
+        try:
+            if self.use_fallbacks:
+                resp = self.client.beta.messages.create(
+                    betas=["server-side-fallback-2026-07-01"], fallbacks="default", **request)
+            else:
+                resp = self.client.messages.create(**request)
+        except sdk.BadRequestError as e:
+            raise PilotError(f"request rejected: {e.message}", fatal=True)
+        except (sdk.AuthenticationError, sdk.PermissionDeniedError, sdk.NotFoundError) as e:
+            raise PilotError(f"{type(e).__name__}: {e.message}", fatal=True)
+        except sdk.RateLimitError:
+            raise PilotError("rate limited")
+        except sdk.APITimeoutError:
+            raise PilotError("no reply in time")
+        except sdk.APIConnectionError:
+            raise PilotError("cannot reach the API")
+        except sdk.APIStatusError as e:
+            raise PilotError(f"API error {e.status_code}")
+        except (sdk.AnthropicError, TypeError) as e:
+            raise PilotError(f"no usable Anthropic credentials: {e}", fatal=True)
         latency = time.monotonic() - t0
         if resp.stop_reason == "refusal":
             cat = resp.stop_details.category if resp.stop_details else None
-            raise ValueError(f"model declined (category {cat})")
+            raise PilotError(f"model declined (category {cat})")
         if resp.stop_reason == "max_tokens":
-            raise ValueError("reply cut off at max_tokens")
+            raise PilotError("reply cut off at max_tokens")
         text = next((b.text for b in resp.content if b.type == "text"), None)
         if text is None:
-            raise ValueError("no text block in reply")
-        action = sanitize(json.loads(text))
-        u = resp.usage
-        info = {"latency_s": round(latency, 3), "model": resp.model,
-                "input_tokens": u.input_tokens, "output_tokens": u.output_tokens}
-        return action, info
+            raise PilotError("no text block in reply")
+        return parse_action(text), {"latency_s": round(latency, 3), "model": resp.model,
+                                    "input_tokens": resp.usage.input_tokens,
+                                    "output_tokens": resp.usage.output_tokens}
+
+
+class OpenAIBrain:
+    """gpt-6-astra by default. One Responses API call per step."""
+    provider = "openai"
+
+    def __init__(self, model, effort, timeout, base_url=None):
+        import openai
+        self.sdk = openai
+        key = os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_KEY")
+        if not key:
+            raise PilotError("no OpenAI key: set OPENAI_API_KEY (or OPENAI_KEY) in the environment or .env", fatal=True)
+        kwargs = {"api_key": key, "timeout": timeout, "max_retries": 0}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self.client = openai.OpenAI(**kwargs)
+        self.model, self.effort = model, effort
+
+    def decide(self, jpeg_bytes, goal, step, elapsed, history):
+        sdk = self.sdk
+        b64 = base64.standard_b64encode(jpeg_bytes).decode("ascii")
+        request = dict(
+            model=self.model,
+            instructions=SYSTEM_PROMPT,
+            input=[{"role": "user", "content": [
+                {"type": "input_image", "image_url": f"data:image/jpeg;base64,{b64}"},
+                {"type": "input_text", "text": user_text(goal, step, elapsed, history)},
+            ]}],
+            text={"format": {"type": "json_schema", "name": "rov_action", "strict": True,
+                             "schema": ACTION_SCHEMA}},
+            max_output_tokens=2000,
+        )
+        if self.effort:
+            request["reasoning"] = {"effort": self.effort}
+        t0 = time.monotonic()
+        try:
+            resp = self.client.responses.create(**request)
+        except sdk.BadRequestError as e:
+            raise PilotError(f"request rejected: {e.message}", fatal=True)
+        except (sdk.AuthenticationError, sdk.PermissionDeniedError, sdk.NotFoundError) as e:
+            raise PilotError(f"{type(e).__name__}: {e.message}", fatal=True)
+        except sdk.RateLimitError:
+            raise PilotError("rate limited")
+        except sdk.APITimeoutError:
+            raise PilotError("no reply in time")
+        except sdk.APIConnectionError:
+            raise PilotError("cannot reach the API")
+        except sdk.APIStatusError as e:
+            raise PilotError(f"API error {e.status_code}")
+        latency = time.monotonic() - t0
+        if resp.status != "completed":
+            why = getattr(resp.incomplete_details, "reason", None) if resp.incomplete_details else None
+            raise PilotError(f"reply {resp.status} ({why})")
+        for item in resp.output:
+            for part in getattr(item, "content", None) or []:
+                if part.type == "refusal":
+                    raise PilotError("model declined")
+        if not resp.output_text:
+            raise PilotError("empty reply")
+        return parse_action(resp.output_text), {"latency_s": round(latency, 3), "model": resp.model,
+                                                "input_tokens": resp.usage.input_tokens,
+                                                "output_tokens": resp.usage.output_tokens}
+
+
+def make_brain(a):
+    load_dotenv()
+    provider = a.provider
+    if provider == "auto":
+        has_openai = bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_KEY"))
+        has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+        provider = "openai" if has_openai and not has_anthropic else "anthropic"
+    model = a.model or DEFAULT_MODEL[provider]
+    if provider == "openai":
+        return OpenAIBrain(model, a.effort, a.timeout, a.base_url)
+    return AnthropicBrain(model, a.effort, a.timeout, not a.no_fallbacks, a.base_url)
 
 
 def encode_jpeg(rgb, width, quality):
@@ -190,26 +317,12 @@ def run_check(a):
     y, x = np.mgrid[0:360, 0:640]
     img = np.stack([40 + x // 8, 110 + y // 6, 150 + 0 * x], axis=2).astype(np.uint8)
     img[250:270, 100:540] = (60, 40, 30)          # a dark bar on the "floor"
-    brain = Brain(a.model, a.effort, a.timeout, not a.no_fallbacks, a.base_url)
     try:
+        brain = make_brain(a)
         action, info = brain.decide(encode_jpeg(img, 640, 70), "Test call. Report what you see and stay still.", 1, 0.0, [])
-    except anthropic.AuthenticationError:
-        sys.exit("CHECK FAILED: credentials rejected. Set ANTHROPIC_API_KEY or run `ant auth login`.")
-    except anthropic.PermissionDeniedError as e:
-        sys.exit(f"CHECK FAILED: this key may not use {a.model}: {e.message}")
-    except anthropic.NotFoundError as e:
-        sys.exit(f"CHECK FAILED: model or endpoint not found: {e.message}")
-    except anthropic.BadRequestError as e:
-        sys.exit(f"CHECK FAILED: request rejected: {e.message}\n(try --no-fallbacks if it names 'fallbacks')")
-    except anthropic.RateLimitError:
-        sys.exit("CHECK FAILED: rate limited. Wait and retry.")
-    except anthropic.APIStatusError as e:
-        sys.exit(f"CHECK FAILED: API error {e.status_code}: {e.message}")
-    except anthropic.APIConnectionError as e:
-        sys.exit(f"CHECK FAILED: cannot reach the API (no internet?): {e}")
-    except (anthropic.AnthropicError, TypeError) as e:
-        sys.exit(f"CHECK FAILED: no usable credentials or client error: {e}")
-    print(f"CHECK OK  model={info['model']}  latency={info['latency_s']:.1f} s  "
+    except PilotError as e:
+        sys.exit(f"CHECK FAILED: {e}")
+    print(f"CHECK OK  provider={brain.provider}  model={info['model']}  latency={info['latency_s']:.1f} s  "
           f"tokens in/out={info['input_tokens']}/{info['output_tokens']}")
     print(f"  saw: {action['seeing']}\n  action: forward {action['forward']} yaw {action['yaw_rate_cw']} "
           f"hold {action['hold_s']} done {action['done']}")
@@ -227,9 +340,9 @@ def run_ros(a):
     node = rclpy.create_node("llm_pilot")
     log = node.get_logger()
     try:
-        brain = Brain(a.model, a.effort, a.timeout, not a.no_fallbacks, a.base_url)
-    except (anthropic.AnthropicError, TypeError) as e:
-        sys.exit(f"no usable API credentials: {e}\nSet ANTHROPIC_API_KEY, then run with --check first.")
+        brain = make_brain(a)
+    except PilotError as e:
+        sys.exit(f"{e}\nRun with --check first.")
     os.makedirs(a.out, exist_ok=True)
     steps_f = open(os.path.join(a.out, "steps.jsonl"), "a")
     pub = node.create_publisher(TwistStamped, a.cmd_topic, 10)
@@ -265,20 +378,10 @@ def run_ros(a):
         try:
             action, info = brain.decide(jpeg, a.goal, step, elapsed, history)
             result = ("ok", action, info)
-        except anthropic.RateLimitError:
-            result = ("error", "rate limited", None)
-        except anthropic.APITimeoutError:
-            result = ("error", f"no reply within {a.timeout:.0f} s", None)
-        except anthropic.APIConnectionError:
-            result = ("error", "cannot reach the API", None)
-        except anthropic.BadRequestError as e:
-            result = ("fatal", f"request rejected: {e.message}", None)
-        except (anthropic.AuthenticationError, anthropic.PermissionDeniedError, anthropic.NotFoundError) as e:
-            result = ("fatal", f"{type(e).__name__}: {e.message}", None)
-        except anthropic.APIStatusError as e:
-            result = ("error", f"API error {e.status_code}", None)
-        except (ValueError, KeyError, json.JSONDecodeError) as e:
-            result = ("error", f"unusable reply: {e}", None)
+        except PilotError as e:
+            result = ("fatal" if e.fatal else "error", str(e), None)
+        except Exception as e:                      # never let a worker-thread bug leave the vehicle moving
+            result = ("error", f"unexpected {type(e).__name__}: {e}", None)
         with lock:
             S["result"] = result
 
@@ -355,7 +458,7 @@ def run_ros(a):
             steps_f.flush()
 
     node.create_timer(0.1, tick)
-    log.info(f"llm_pilot: model={a.model} effort={a.effort} {'DRY RUN (zeros only) ' if a.dry_run else ''}"
+    log.info(f"llm_pilot: provider={brain.provider} model={brain.model} {'DRY RUN (zeros only) ' if a.dry_run else ''}"
              f"frames {a.width}px -> {a.out}")
     stop_count = [0]
 
@@ -382,8 +485,10 @@ def run_ros(a):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--goal", default="Follow the pipe lying on the pool floor to its far end, staying over it, then stop.")
-    ap.add_argument("--model", default=MODEL)
-    ap.add_argument("--effort", default="low", choices=["low", "medium", "high", "xhigh", "max"])
+    ap.add_argument("--provider", default="auto", choices=["auto", "openai", "anthropic"],
+                    help="auto: openai if only an OpenAI key is present, else anthropic")
+    ap.add_argument("--model", default=None, help="default: gpt-6-astra (openai) or claude-opus-5-5 (anthropic)")
+    ap.add_argument("--effort", default=None, help="reasoning effort. anthropic default low; openai default: not sent")
     ap.add_argument("--timeout", type=float, default=20.0, help="seconds to wait for one model reply")
     ap.add_argument("--no-fallbacks", action="store_true", help="do not request server-side refusal fallback")
     ap.add_argument("--base-url", default=None, help="testing only")

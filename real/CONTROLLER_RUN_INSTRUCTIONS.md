@@ -208,16 +208,30 @@ take a frame, ask the model for one small action, carry it out for up to 2 secon
 take the next frame. The ROV stands still while the model thinks. Its commands go through
 the same converter, so the stick limits, geofence and SPACE stop all still apply.
 
-It needs internet on the topside laptop and an Anthropic API key. Each step sends one
-768 px JPEG of the camera view to the Anthropic API.
+It needs internet on the topside laptop and a model API key. Each step uploads one 768 px
+JPEG of the camera view to the model provider. Two providers work:
+
+| Provider | Default model | Key variable | Install |
+|---|---|---|---|
+| OpenAI | `gpt-6-astra` | `OPENAI_API_KEY` or `OPENAI_KEY` | `python3 -m pip install openai` |
+| Anthropic | `claude-opus-5-5` | `ANTHROPIC_API_KEY` | `python3 -m pip install anthropic` |
 
 **Setup, once, in a ROS 2 terminal:**
 ```bash
-python3 -m pip install anthropic
-export ANTHROPIC_API_KEY=...            # ask the project lead; never commit it
-python3 llm_pilot.py --check            # one test call, no motion. Must print CHECK OK
+python3 -m pip install openai                 # or anthropic
+echo 'OPENAI_KEY=...' > ../.env               # ask the project lead for the key
+chmod 600 ../.env                             # .env is git-ignored. Never commit a key.
+python3 llm_pilot.py --check                  # one test call, no motion. Must print CHECK OK
 ```
-`--check` also prints how long one reply takes. Expect a few seconds per step.
+The pilot picks the provider from whichever key it finds; force one with `--provider`.
+`--check` also prints how long one reply takes. Measured with `gpt-6-astra`: 5 to 8 seconds
+and about 1,250 input tokens per step.
+
+**What to expect (simulator trials, 2026-10-06):** the model found the pipe and steered
+onto it, holding about 0.1 m to one side. It judged distance badly: it stopped after
+0.5 m, reporting the end of the pipe half a metre ahead when it was 2.3 m ahead. Without
+being told what the far wall was, it refused to move at all. Treat it as an experiment,
+start with `--dry-run`, and expect to word the goal carefully.
 
 **Run it:**
 1. Terminal B, converter with a longer run limit and a fence sized for free movement

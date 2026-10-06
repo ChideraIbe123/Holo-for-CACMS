@@ -586,6 +586,11 @@ def main():
                         help='ablation: disable the rotational/heave rate servos '
                              '(quantifies how much fidelity comes from trajectory '
                              'matching vs sensor modeling)')
+    parser.add_argument('--fpv', action='store_true',
+                        help='publish a forward camera on /camera/image_raw (bgr8, 768x432, 5 Hz) '
+                             'for camera-driven controllers such as real/llm_pilot.py. Off by default.')
+    parser.add_argument('--pipe', action='store_true',
+                        help='with --pool intex: lay a dark 2.4 m pipe on the pool floor. Off by default.')
     parser.add_argument('--capture', default=None, metavar='DIR',
                         help='save chase-camera frames (sim-time-stamped PNGs) to DIR')
     parser.add_argument('--pool', choices=['intex'], default=None,
@@ -686,6 +691,19 @@ def main():
                     'Hz': 5, 'configuration': {'CaptureWidth': 960, 'CaptureHeight': 540}})
         print(f'[bridge] capturing chase frames -> {args.capture}')
 
+    if args.fpv:
+        for agent in scenario['agents']:
+            if agent['agent_name'] == AGENT_NAME:
+                # the vehicle's own forward camera: at the nose, pitched 10 deg down
+                agent['sensors'].append({
+                    'sensor_type': 'RGBCamera', 'sensor_name': 'FpvCam',
+                    'location': [0.30, 0.0, 0.05], 'rotation': [0.0, 10.0, 0.0],
+                    'Hz': 5, 'configuration': {'CaptureWidth': 768, 'CaptureHeight': 432}})
+        from rclpy.qos import qos_profile_sensor_data
+        from sensor_msgs.msg import Image as _RosImage
+        fpv_pub = node.create_publisher(_RosImage, '/camera/image_raw', qos_profile_sensor_data)
+        print('[bridge] forward camera -> /camera/image_raw (768x432 bgr8, 5 Hz)')
+
     if args.pool == 'intex':
         import intex_pool
         POOL_FLOOR_DEPTH = 1.05    # v16: /dvl/altitude bottom distance in the pool twin
@@ -703,9 +721,13 @@ def main():
         if args.pool == 'intex':
             import intex_pool
             intex_pool.spawn_pool(env)
+            if args.pipe:
+                intex_pool.spawn_pipe(env)
+                print('[bridge] pool: pipe laid on the floor')
         t = 0.0
         wall_start = _time.time()
         last_dyn = None
+        replay_free = {}      # scratch state for the --fpv sleep watchdog
         try:
             while rclpy.ok():
                 if model is not None:
@@ -800,8 +822,28 @@ def main():
                     _im = np.asarray(state['ChaseCam'])[:, :, :3][:, :, ::-1]
                     _Img.fromarray(_im.astype(np.uint8)).save(
                         os.path.join(args.capture, f'frame_{t:08.2f}.png'))
+                if args.fpv and 'FpvCam' in state:
+                    _f = np.ascontiguousarray(np.asarray(state['FpvCam'])[:, :, :3]).astype(np.uint8)
+                    _m = _RosImage()
+                    _m.header.stamp = bridge._stamp()
+                    _m.header.frame_id = 'camera_link'
+                    _m.height, _m.width = int(_f.shape[0]), int(_f.shape[1])
+                    _m.encoding, _m.is_bigendian, _m.step = 'bgr8', 0, int(_f.shape[1]) * 3
+                    _m.data = _f.tobytes()
+                    fpv_pub.publish(_m)
                 if 'DynamicsSensor' in state:
                     last_dyn = np.asarray(state['DynamicsSensor'], dtype=float)
+                    if args.fpv and args.control and tau_ext is not None:
+                        # physics-sleep watchdog (same idea as indoor_pool_capture.py): the engine
+                        # sleeps a body that sits still, then ignores forces. A camera-driven
+                        # controller stops between steps, so wake a frozen-but-commanded vehicle.
+                        _fz = replay_free.setdefault('hist', [])
+                        _fz.append(last_dyn[6:9].copy())
+                        if len(_fz) > 100:
+                            _fz.pop(0)
+                            if np.linalg.norm(_fz[-1] - _fz[0]) < 0.002 and (abs(tau_ext[0]) > 2.0 or abs(tau_ext[5]) > 0.5):
+                                env.agents[AGENT_NAME].teleport(location=last_dyn[6:9] + np.array([0, 0, 0.003]))
+                                _fz.clear()
 
                 if REAL_TIME_PACE:
                     lag = t - (_time.time() - wall_start)
