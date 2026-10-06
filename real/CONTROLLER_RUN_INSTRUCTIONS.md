@@ -201,6 +201,48 @@ prints time, path length and tracking error per run.
 Upload the whole `runs/` folder and a photo of the run sheet to Box under
 `2026-MM-DD Swimming tub test/controller_runs/`.
 
+## Optional: the LLM pilot (camera in, actions out)
+
+`llm_pilot.py` lets a vision-language model drive from the camera. It works in steps:
+take a frame, ask the model for one small action, carry it out for up to 2 seconds, stop,
+take the next frame. The ROV stands still while the model thinks. Its commands go through
+the same converter, so the stick limits, geofence and SPACE stop all still apply.
+
+It needs internet on the topside laptop and an Anthropic API key. Each step sends one
+768 px JPEG of the camera view to the Anthropic API.
+
+**Setup, once, in a ROS 2 terminal:**
+```bash
+python3 -m pip install anthropic
+export ANTHROPIC_API_KEY=...            # ask the project lead; never commit it
+python3 llm_pilot.py --check            # one test call, no motion. Must print CHECK OK
+```
+`--check` also prints how long one reply takes. Expect a few seconds per step.
+
+**Run it:**
+1. Terminal B, converter with a longer run limit and a fence sized for free movement
+   (the box is measured from where the ROV starts, in metres: back, ahead, right, left):
+   ```bash
+   python3 cmdvel_to_manual.py --depth-mode passthrough --max-run 300 --fence=-0.6,3.0,-0.8,0.8
+   ```
+2. Dry run first. The model decides and logs, but the ROV does not move:
+   ```bash
+   python3 llm_pilot.py --dry-run --goal "Follow the pipe on the pool floor to its far end, then stop." --out llm_runs/dry1
+   ```
+   Read the printed decisions. If they make sense for what the camera shows, continue.
+3. Arm (`a` in Terminal B), then run it live, with a bag recording in another terminal:
+   ```bash
+   python3 llm_pilot.py --depth-target -0.3 --goal "Follow the pipe on the pool floor to its far end, then stop." --out llm_runs/pipe1
+   ```
+4. It stops when the model says it is done, after 40 steps, or after 4 minutes.
+   **SPACE in Terminal B stops it at any time.**
+
+Each run folder holds every frame the model saw (`frame_0001.jpg`, ...) and `steps.jsonl`
+with each decision, its stated reason, the reply time and the token count.
+
+The goal is plain English. Other examples: `"Drive toward the far wall and stop about one
+metre before it."`, `"Turn on the spot until you can see the pipe, then stop."`
+
 ## Known limits
 
 - **Estimator drift.** Dead reckoning drifts a few percent of distance travelled. In a
@@ -219,5 +261,6 @@ Upload the whole `runs/` folder and a photo of the run sheet to Box under
 | `course_runner.py` | Runs one law: reads `/deadreckon/odom`, publishes `/cmd_vel`. |
 | `cmdvel_to_manual.py` | Turns `/cmd_vel` into stick commands. Owns arm, stop, jog. |
 | `run_one.sh` | One recorded run on the vehicle. |
+| `llm_pilot.py` | A vision-language model drives from the camera, one small step at a time. |
 | `score_runs.py` | Scores finished runs. |
-| `sim_run.sh`, `test_tracker.py`, `test_mavlink_fake.py` | Simulator and offline tests. |
+| `sim_run.sh`, `test_tracker.py`, `test_mavlink_fake.py`, `test_llm_fake.py` | Simulator and offline tests. |
