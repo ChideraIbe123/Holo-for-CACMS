@@ -47,7 +47,7 @@ The code must sit in a folder your ROS 2 terminal can see.
   shared with the container, so clone inside it. On the host:
   ```bash
   cd <path to>/BlueROV-Tools
-  git clone -b pilot-controllers https://github.com/sumanthk123/Holo-for-CACMS.git pilot_kit
+  git clone -b pilot-controllers https://github.com/ChideraIbe123/Holo-for-CACMS.git pilot_kit
   ```
   Git will list `pilot_kit/` as untracked in BlueROV-Tools. Do not commit it there.
   Inside the container it appears at `/workspaces/ros2_ws/src/BlueROV-Tools/pilot_kit`.
