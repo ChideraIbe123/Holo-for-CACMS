@@ -35,10 +35,7 @@ vehicle does, beyond chance and within run-to-run noise.
 | 5 | tight_pd | 0.123 | 0.011 |
 | 6 | sluggish | 0.143 | 0.003 |
 
-NOTE: when the lab's real controllers (ANFIS-DDPG / fuzzy / PPO) are added via
-`lab_controller_adapter.py`, the benchmark will be rerun at ≥4 seeds and THIS
-TABLE REPLACED — the freeze that binds is the one dated before the real
-session, with its own commit hash appended below.
+
 
 ## Planned real session (docs/real_ranking_protocol.md governs)
 
@@ -67,3 +64,28 @@ intervention voided and rerun; both rosbags and live `sim_dr.csv` recorded.
 ## Amendment log
 
 - (append-only; each entry: date, what changed, new commit hash)
+- **2026-10-10 — Amendment 1: actual experiment entrants frozen.** The original
+  table ranked six in-house stand-in controllers; the real experiment's entrants
+  are the five laws delivered in the pilot kit (P, pursuit, LOS, ILOS, and the
+  lab's fuzzy tracker). THE BINDING SIM PREDICTION is their ranking under the
+  official procedure (4 seeds, Intex pool twin, 2.0x0.6 m course, RMSE m),
+  generated at code commit `7a3504c` with the twin physics unchanged since
+  v1.0.0 (all post-freeze code changes are opt-in flags, default-off):
+
+  | rank | law | sim RMSE | ±seed |
+  |---|---|---|---|
+  | 1 | pursuit | 0.140 | 0.002 |
+  | 2 | los | 0.154 | 0.001 |
+  | 3 | ilos | 0.174 | 0.002 |
+  | 4 | p | 0.181 | 0.002 |
+  | 5 | fuzzy_lab | 0.226 | 0.001 |
+
+  Analysis update for n=5: exact chance threshold is rho >= 0.800 (alpha=0.05);
+  power at 4 real repeats = 0.92 if the sim ordering is correct; the design
+  tolerates up to two adjacent swaps. Repeats: 4 per law, line course included.
+  DISCLOSURE: a shakedown pool session (2026-10-08, 1-2 runs per law) occurred
+  before this amendment and its preliminary comparison was examined. The sim
+  prediction above was NOT altered in response — the twin is unchanged since
+  v1.0.0; the only change is running the newly delivered laws through the
+  frozen twin. The shakedown is reported as such and is not the confirmatory
+  session.
