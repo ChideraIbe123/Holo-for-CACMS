@@ -24,5 +24,7 @@ echo "=== $TAG: controller starting ==="
 python3 "$HERE/course_runner.py" --law "$LAW" --course "$COURSE" --name "$TAG" \
     --depth-target "${DEPTH:--0.3}" --line-length "${LINE_LENGTH:-2.4}" --log "$OUT/runner.csv" || true
 sleep 1
-kill -INT $BAG 2>/dev/null; wait $BAG 2>/dev/null || true
+# SIGINT is ignored by background jobs from non-interactive shells (session
+# 2026-10-08 finding: orphaned recorders wrote ~700 GB); SIGTERM works.
+kill -TERM $BAG 2>/dev/null; wait $BAG 2>/dev/null || true
 echo "=== $TAG: done. $(tail -1 "$OUT/runner.csv" | cut -d, -f1) s logged -> $OUT ==="

@@ -1,59 +1,96 @@
-# Holo-for-CACMS: A Validated Virtual BlueROV2 in HoloOcean
+# Holo-for-CACMS: Can You Trust a Simulator's Controller Rankings? A Validated BlueROV2 Digital Twin
 
-A digital twin of our lab's BlueROV2 underwater robot, built on the
-[HoloOcean](https://byu-holoocean.github.io/holoocean-docs/) simulator. The simulated
-robot matches the real one in body, movement, sensors, sensor noise, and wire-format
-conventions, and it swims in a spec-exact copy of the lab's Intex test pool. Our lab's
-navigation code runs on it **unchanged**, and a controller-ranking benchmark is ready
-for the lab's real controllers.
-
-**Current fidelity: 38 of 41 statistical checks indistinguishable from real data** when
-sim and real are compared in the same pool on the same maneuvers (35–37/41 on the older
-open-water floors). The three remaining misses are marginal (14-43% over their margins) and likely
-need the armed-hover vibration characterization (see Roadmap).
+A digital twin of a BlueROV2 underwater robot in [HoloOcean](https://byu-holoocean.github.io/holoocean-docs/),
+built to answer one question with evidence instead of hope: **if the simulator says
+controller A beats controller B, does that hold on the real vehicle?** Everything in
+this repo exists to make that comparison trustworthy — a statistically validated twin,
+a calibrated pass/fail methodology, a controller benchmark, the kit that drives the
+real vehicle, and pre-registered predictions checked against real pool sessions.
 
 ![Simulated BlueROV2 in the virtual Intex pool](media/indoor_pool_chase.png)
 
-## The three things this repo does
+<img src="media/benchmark_ranking_5laws.png" width="70%" alt="Sim ranking of the five real controllers"/>
 
-**1. Publishes real-format sensor data from sim** (`sim/mavros_bridge.py`) — IMU, DVL,
-depth topics that are field-for-field identical to the real vehicle's, including
-measured noise, the accelerometer's sample-and-hold quirk, the DVL's raw FRD wire
-convention and mount misalignment, and true (measured) sensor-only noise floors when
-thrusters are idle. The lab's dead-reckoning stack consumes it unmodified.
+## The three claims, and where they stand
 
-**2. Scores how real the sim data is** (`sim/fidelity_scorecard.py`) — 41 statistical
-distances per comparison (distribution, spectrum, temporal autocorrelation, windowed
-MMD per channel) judged against a *reference floor* of real-to-real variation. The
-pass criterion is itself calibrated on real data (`sim/threshold_study.py`): a
-conformal margin that passes 95% of genuine real recordings, adopted after showing the
-usual Mann-Whitney test wrongly fails 18% of them.
+**1. The twin's data is statistically indistinguishable from real recordings.**
+38 of 41 calibrated checks pass when sim and real are compared on the same maneuvers
+in the same pool (the three misses are marginal and diagnosed). The pass criterion is
+itself validated: it admits 95% of genuine real recordings by construction, after we
+showed the textbook approach wrongly rejects 18% of real data.
 
-**3. Ranks controllers closed-loop** (`sim/waypoint_controller.py`,
-`sim/lab_controller_adapter.py`, `sim/score_ranking.py`) — controllers fly the sim
-vehicle on dead-reckoning feedback inside the pool twin; ranked by the community-
-standard von Benzon 2022 metrics (RMSE/IAE). A lab controller ports by implementing
-ONE `compute(obs) -> yaw_rate` class — no ROS code (see the adapter's docstring).
-`sim/score_correlation.py` then computes the sim-vs-real ranking correlation — the
-headline experiment once the real controllers and a pool session exist.
+**2. The twin predicts controller behavior — including failure.**
+In its first real test (Oct 2026), five path-following controllers drove the real
+vehicle. The twin had ranked the lab's fuzzy tracker last — it tracked worst in
+reality and crossed the pool's 1.0 m safety boundary. The twin's excursion prediction
+for that controller: **1.02 m, the only law over the line; reality: 1.03 m.** That
+prediction is now pre-registered for the confirmatory session.
+
+**3. The ranking comparison is tamper-proof.**
+The sim's predicted ranking, the analysis statistics (pairwise-separable ordering +
+MMRV, Spearman secondary), and the interpretation rule — including what we say if the
+result is inconclusive — are frozen publicly in
+[docs/preregistration.md](docs/preregistration.md) *before* the confirmatory session,
+against a fixed commit. Amendments are append-only and disclosed.
+
+Status: shakedown session complete (all 5 controllers ran; preliminary agreement
+underpowered by design); confirmatory session (5 laws × 4 repeats + line course) is
+the next milestone. The one known disagreement candidate (pursuit vs ILOS) localizes
+to unmodeled tether drag — by design, the methodology names its own blind spots.
+
+## Use this with your own vehicle
+
+The methodology is vehicle-agnostic; the BlueROV2 parts are swappable. The recipe:
+
+1. **Record** your vehicle: a motors-off float, a motors-on hover, and short
+   single-axis runs (surge / sway / heave / yaw at 2–3 throttle levels).
+2. **Fit** sensor noise (float decomposition) and per-axis dynamics (steady-state
+   windows) — `sim/tubtest_floats.py`, `sim/tub_sysid.py`.
+3. **Score** your sim's realism against your recordings with the calibrated
+   scorecard — `sim/fidelity_scorecard.py` + `sim/threshold_study.py`. These compare
+   npz sensor streams; they do not care what vehicle produced them.
+4. **Pre-register and test**: freeze your sim's controller ranking
+   (template: `docs/preregistration.md`), run the real session
+   (`docs/real_ranking_protocol.md`), compare with `sim/score_correlation.py`.
+
+| Layer | Vehicle-agnostic (keep) | BlueROV2-specific (swap) |
+|---|---|---|
+| Fidelity | `fidelity_scorecard.py`, `threshold_study.py`, `method_selection_study.py`, `tubtest_floats.py` | — |
+| Ranking | `score_ranking.py`, `score_correlation.py`, `power_analysis.py`, pre-registration + protocol templates | course dimensions |
+| Twin | servo/replay architecture in `mavros_bridge.py` | `bluerov2_standard_model.py`, `scenario_bluerov.json`, topic names, `intex_pool.py` |
+| Real vehicle | `real/tracker.py` laws, `real/course_runner.py` | `real/cmdvel_to_manual.py` stick gains, MAVLink specifics |
+
+(Demonstrated end-to-end on one platform; the generic layer makes no BlueROV2
+assumptions, but porting it to your vehicle is your validation to run, not ours to claim.)
+
+## What's in the repo
+
+```
+sim/     the twin + analysis: sensor bridge, dynamics model, pool, fidelity scorecard,
+         criterion calibration, benchmark + ranking/correlation statistics
+real/    drives the actual vehicle: 5 path-following laws (shared with sim),
+         /cmd_vel -> MAVLink stick converter with safety keys, course runner,
+         session scoring, LLM camera-pilot, offline fake-backend tests
+tools/   bag -> npz conversion, replay, recorders, noise fitting
+scripts/ one-command E2E suites (verify, benchmark, fidelity campaign)
+docs/    pre-registration · real-session protocol · validation report (PDF)
+```
+
+Run instructions: [INSTRUCTIONS.md](INSTRUCTIONS.md) (sim workflows) and
+[real/CONTROLLER_RUN_INSTRUCTIONS.md](real/CONTROLLER_RUN_INSTRUCTIONS.md) (pool
+sessions, written for the topside operator).
 
 ## Validation summary
 
 | Part | How it was matched | Result |
 |---|---|---|
-| Vehicle body | Real flight logs confirm the standard 6-thruster BlueROV2 | exact configuration |
-| Movement | Real thruster commands replayed through the model vs measured speeds | cruise within 5%, top speed within 0.4% |
-| Axis conventions | Dedicated single-axis pool runs | surge +0.83, sway +0.89, yaw −0.97 (yaw inverted: MAVLink-CW vs ROS-CCW, confirmed in lab EKF source) |
-| Sensor data | Formats/rates/frames/covariances from real recordings | field-for-field identical |
-| Sensor noise | Armed/disarmed float tests: true sensor floors vs driving disturbance | sensor noise is 20–100× below in-mission floors; both modeled separately |
-| Pool | Intex 26770 manual + published capacity: 4.0×2.0 m, 1.05 m water | exact; autonomous laps 100% contained |
-| End to end | Lab dead-reckoning, unchanged, on sim data | ~3% drift, same as on real data |
-| Statistical fidelity | 41 metrics vs calibrated real-real floor | 38/41 matched-venue |
+| Sensor data | formats/rates/frames from real recordings; noise decomposed via armed/disarmed floats; stream quirks replicated (DVL duplicate stream, accel sample-and-hold) | field-for-field identical; 38/41 statistical checks |
+| Dynamics | per-axis steady-state fit from single-axis runs; axis conventions recovered from data | surge ±16%, heave ±24%, sway/yaw re-fit from measurement |
+| Pool | Intex 26770 manual + capacity: 4.0×2.0 m, 1.05 m water | exact; 100% containment in autonomous laps |
+| End to end | lab dead-reckoning runs unchanged | drift 3–5% of distance, matching real data |
+| Behavior | controller ranking + excursion predictions vs real sessions | fuzzy ranked last + fence breach predicted (1.02 m vs 1.03 m real); confirmatory session pre-registered |
 
 Full write-up: [docs/BlueROV2_Simulation_Report.pdf](docs/BlueROV2_Simulation_Report.pdf)
-· Real-session procedure: [docs/real_ranking_protocol.md](docs/real_ranking_protocol.md)
-
-<img src="media/benchmark_ranking_intex.png" width="70%"/>
 
 ## Setup (once)
 
@@ -61,130 +98,43 @@ Requirements: Linux with a GPU, ROS 2 (Humble or newer), and a GitHub account li
 to Epic Games (HoloOcean's install requires it).
 
 ```bash
-# 1. python env that can see ROS (system python matching your ROS distro)
 python3 -m venv --system-site-packages ~/holoocean-env
-
-# 2. HoloOcean (private repo; needs the Epic-linked GitHub account)
 git clone https://github.com/byu-holoocean/HoloOcean.git ~/holoocean
 ~/holoocean-env/bin/pip install ~/holoocean/client
 ~/holoocean-env/bin/python -c "import holoocean; holoocean.install('Ocean')"
-
-# 3. this repo
 git clone https://github.com/ChideraIbe123/Holo-for-CACMS.git
 ```
 
-## Run it
-
-```bash
-source /opt/ros/humble/setup.bash
-cd Holo-for-CACMS/sim
-PY=~/holoocean-env/bin/python
-
-# vehicle swims in the Intex pool twin, publishing real-format topics:
-$PY mavros_bridge.py --headless --move --pool intex
-ros2 topic echo /mavros/imu/data          # (another terminal)
-
-# closed-loop: bridge + lab dead-reckon + a controller driving on its estimate
-bash ../scripts/run_closedloop_test.sh
-
-# controller-ranking benchmark in the pool twin (6 controllers x 2 seeds + scores):
-bash ../scripts/run_benchmark_intex.sh
-
-# fidelity campaign: replay real recordings, score vs the real-real floor
-bash ../scripts/run_tub_campaign.sh       # expects bags/npz per the script header
-
-# pool footage:
-$PY indoor_pool_capture.py out_frames 90
-```
-
-Key `mavros_bridge.py` flags: `--pool intex` (spawn in the pool twin) · `--control`
-(velocity autopilot driven by `/cmd_vel`) · `--replay prof.npz` (replay a real run:
-commands + measured rotation rates + depth) · `--no-noise` · `--duration N`.
-
-## What's in this repo
-
-```
-sim/   the simulator (run these)
-  mavros_bridge.py            main program: HoloOcean + real-format ROS 2 topics
-  bluerov2_standard_model.py  6-DOF physics of the standard BlueROV2
-  scenario_bluerov.json       vehicle + sensor setup
-  intex_pool.py               the lab pool's exact geometry (shared module)
-  indoor_pool_capture.py      pool twin footage + containment verification
-  waypoint_controller.py      reference controllers (P/PD/pursuit/SMC), pool course
-  lab_controller_adapter.py   drop-in slot for the lab's real controllers
-  score_ranking.py            von Benzon RMSE/IAE ranking vs seed floor
-  score_correlation.py        sim-vs-real ranking correlation (the paper metric)
-  fidelity_scorecard.py       41-metric fidelity vs calibrated real-real floor
-  threshold_study.py          calibrates the pass criterion on real data
-  tubtest_floats.py           sensor-vs-vibration noise decomposition from floats
-  extract_cmd_profile.py      real bag -> replayable profile (cmds, rates, depth)
-  tub_sysid.py                steady-state dynamics validation on single-axis runs
-  infer_signs_teleop.py       axis-sign check from piloted runs
-
-tools/  standalone helpers
-  bag_to_npz.py               bag -> npz for the scorecard
-  bag_replayer.py             plays a real recording onto live ROS topics
-  measure_noise_floor.py      sim-vs-real noise comparison
-  record_run.py               records a sim run to npz
-  sim_traj_recorder.py        odom + ground-truth CSVs (works on the real vehicle too)
-  trajectory_recorder.py      estimated-vs-reference recorder + stats
-  fit_noise_model.py          excitation-dependent noise fit
-
-scripts/  one-command suites
-  run_holoocean_verify.sh     full E2E check, simple estimator mode
-  run_ekf_verify.sh           full E2E check, EKF mode (deployed vehicle config)
-  run_replay_baseline.sh      real-data baseline (replay bag vs vendor DR)
-  run_closedloop_test.sh      controller-in-the-loop E2E
-  run_adapter_test.sh         lab-controller adapter E2E
-  run_benchmark_intex.sh      controller ranking in the pool twin
-  run_tub_campaign.sh         matched-venue fidelity campaign
-
-docs/    report PDF + real ranking-session protocol
-media/   figures and footage
-```
+Quick start: `~/holoocean-env/bin/python sim/mavros_bridge.py --headless --move --pool intex`
+(real-format sensor topics from a vehicle swimming the pool twin).
 
 ## Conventions & gotchas (read before touching the bridge)
 
-- **HoloOcean's IMU gravity is sign-flipped** vs a real IMU; the bridge corrects it
-  (`GRAVITY_MODE='flip_gravity'`).
-- **Acceleration control scheme is engine index 2**, not 1 — HoloOcean's python docs
-  list the order wrong; the engine source is authoritative.
-- **The real vehicle's angular rates and DVL wire format are FRD** relative to ROS's
-  FLU (x same, y/z inverted) — confirmed empirically (sign gates) and in the lab's EKF
-  source (`DVL_RAW_TO_BASE_LINK = diag(1,-1,-1)`). The bridge publishes the RAW wire
-  convention (incl. the −1.848° DVL mount yaw); `--dvl-frame flu` for the old behavior.
-- **Yaw command convention is inverted** (MAVLink manual-control CW-positive vs ROS
-  CCW-positive): controllers run with `--yaw-sign -1`.
-- **A DVL measures at its mount, not the vehicle center** — the bridge applies the
-  lever arm (ω×r) from the lab's own `sensor_transforms.yaml`.
-- **Real sensor noise is tiny** (gyro ~0.0004 rad/s); in-mission "noise" is mostly
-  thruster/motion disturbance. The bridge injects true sensor floors when idle and
-  excitation-dependent disturbance when driving; rotation/heave motion is trajectory-
-  matched during replays (rate servos), because no noise model can produce real
-  motion's positive increment autocorrelation.
-- **The physics engine puts slow bodies to sleep** and then ignores forces;
-  the pool scripts carry a watchdog that wakes the vehicle with a tiny teleport.
-- **Run ONE bridge at a time** — concurrent bridges publish to the same topics.
-- **Campaign pattern**: every fidelity/benchmark change reruns a full campaign and is
-  judged by the scorecard — never by eye. Sign gates abort campaigns before wasting
-  compute if a convention is wrong. All tunables are constants at the top of
-  `mavros_bridge.py` / `bluerov2_standard_model.py`, each commented with its source.
+- HoloOcean's IMU gravity is sign-flipped vs a real IMU; the bridge corrects it.
+- The acceleration control scheme is engine index 2 (the python docs list it wrong).
+- The real vehicle's angular rates and DVL wire format are FRD vs ROS's FLU (x same,
+  y/z inverted) — confirmed empirically and in the lab's EKF source. The bridge
+  publishes the RAW wire convention, including the −1.848° DVL mount yaw + lever arm.
+- Yaw command convention is inverted (MAVLink CW+ vs ROS CCW+): controllers run
+  `--yaw-sign -1`; this vehicle's motor directions live in ESC config, so logged PWMs
+  are direction-less.
+- True sensor noise is tiny; in-mission "noise" is mostly motion/disturbance — the
+  bridge injects sensor floors when idle, excitation-dependent disturbance when
+  driving, and trajectory-matches rotation/heave during replays.
+- The physics engine sleeps slow bodies; pool scripts carry a teleport watchdog.
+- ONE bridge at a time; run campaigns detached; every change is judged by a rerun
+  campaign and the scorecard, never by eye. Constants carry their provenance in
+  comments.
 
-## Roadmap (what's left)
+## Citing
 
-1. **Real controllers** (ANFIS-DDPG / fuzzy / PPO) into `lab_controller_adapter.py`,
-   rerun the pool benchmark, freeze the pre-registered sim ranking.
-2. **Real ranking session** per `docs/real_ranking_protocol.md` (course: 2.0×0.6 m —
-   a 3×3 m course does not fit the 4×2 m pool), then `score_correlation.py` for the
-   sim-vs-real ranking correlation.
-3. Chase the last three marginal fidelity misses (accel_x amplitude, dvl_z/rel_alt
-   temporal texture) — likely needs the armed-hover vibration characterization.
+See [CITATION.cff](CITATION.cff) (release v1.0.0, MIT license — the LICENSE file
+states the HoloOcean/Unreal dependency boundary).
 
 ## Sources
 
-- [HoloOcean](https://byu-holoocean.github.io/holoocean-docs/) (BYU FRoStLab)
-- Wu (2018), Flinders University: 6-DoF modelling of the BlueROV2 (model coefficients)
-- von Benzon et al. (2022), JMSE: benchmark metrics, SMC baseline, T200 thrust curve
-- [clydemcqueen/bluerov2_gz](https://github.com/clydemcqueen/bluerov2_gz): thruster geometry
-- ArduSub `AP_Motors6DOF`: motor mixing convention
-- AUVSL `BlueROV-Tools`: deployed EKF conventions, sensor transforms, static noise notes
+HoloOcean (BYU) · von Benzon et al. 2022 JMSE (benchmark metrics, SMC, T200) ·
+Wu 2018 (6-DOF coefficients) · Kadian et al. RA-L 2020 + Li et al. 2024 SIMPLER
+(ranking-validation lineage) · Fossen 2021 / Børhaug 2008 (LOS/ILOS laws) ·
+clydemcqueen/bluerov2_gz (thruster geometry) · AUVSL BlueROV-Tools (deployed EKF
+conventions, transforms, static noise notes)
