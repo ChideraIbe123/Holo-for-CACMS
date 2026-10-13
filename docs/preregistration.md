@@ -89,3 +89,19 @@ intervention voided and rerun; both rosbags and live `sim_dr.csv` recorded.
   v1.0.0; the only change is running the newly delivered laws through the
   frozen twin. The shakedown is reported as such and is not the confirmatory
   session.
+- **2026-10-12 — Amendment 2: analysis statistics + failure-mode prediction (added
+  BEFORE the confirmatory session; no confirmatory data exists).**
+  (a) PRIMARY statistic updated to pairwise-separable ordering agreement: of the
+  controller pairs whose RMSE gap exceeds the summed repeat spreads on BOTH sides,
+  the fraction the sim orders correctly, with a one-sided binomial test vs chance;
+  MMRV (margin-weighted, SIMPLER convention) reported with it. Spearman rho + exact
+  permutation p and the noise-floor band remain secondary. Rationale: field-standard
+  for small-n ranking validation (SIMPLER lineage); adopted from the literature, not
+  from our data.
+  (b) ADDITIONAL PRE-REGISTERED PREDICTION (falsifiable): under the frozen twin,
+  fuzzy_lab is the only law whose maximum lateral excursion on the rectangle exceeds
+  the 1.0 m safety boundary (sim max |y| = 1.02 m; all other laws 0.80-0.92 m).
+  Prediction for the confirmatory session: fuzzy_lab is the law most likely to
+  approach or breach the fence; no other law breaches it. (The 2026-10-08 shakedown
+  is consistent — fuzzy crossed at 1.03 m — and is disclosed as prior observation;
+  this amendment makes the prediction binding for the confirmatory session.)

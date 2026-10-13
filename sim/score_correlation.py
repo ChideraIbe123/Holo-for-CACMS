@@ -193,6 +193,32 @@ def report(stats_sim, stats_real, label_a="sim", label_b="real"):
     rho, p = chance_p(rmse_a, rmse_b)
     tau = kendall(rmse_a, rmse_b)
     rv = mmrv(rmse_a, rmse_b)
+
+    # PRIMARY at small n (SIMPLER-lineage practice): pairwise analysis over the
+    # pairs separable above run-to-run noise on BOTH sides. A pair is separable
+    # on a side if the mean gap exceeds the sum of the two seed/repeat spreads
+    # (same rule score_ranking.py uses). Report: correctly ordered fraction of
+    # separable pairs + one-sided binomial p vs coin-flip.
+    sep_pairs, correct = [], 0
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            ga = abs(rmse_a[i] - rmse_a[j])
+            gb = abs(rmse_b[i] - rmse_b[j])
+            fa = stats_sim[names[i]][1] + stats_sim[names[j]][1] + 1e-9
+            fb = stats_real[names[i]][1] + stats_real[names[j]][1] + 1e-9
+            if ga > fa and gb > fb:
+                ok = (rmse_a[i] - rmse_a[j]) * (rmse_b[i] - rmse_b[j]) > 0
+                sep_pairs.append((names[i], names[j], ok))
+                correct += ok
+    if sep_pairs:
+        k, m = correct, len(sep_pairs)
+        p_binom = sum(math.comb(m, t) for t in range(k, m + 1)) / 2 ** m
+        print(f"\nPAIRWISE (primary): {k}/{m} separable pairs correctly ordered "
+              f"(binomial p = {p_binom:.4f} vs chance)")
+        for a_, b_, ok in sep_pairs:
+            print(f"   {a_} vs {b_}: {'agree' if ok else 'DISAGREE'}")
+    else:
+        print("\nPAIRWISE (primary): no pairs separable above noise on both sides")
     lo, med, hi = noise_floor_band(stats_sim, stats_real, names)
 
     print(f"\nSpearman rho = {rho:+.3f}   Kendall tau = {tau:+.3f}"
