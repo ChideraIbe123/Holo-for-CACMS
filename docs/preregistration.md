@@ -105,3 +105,12 @@ intervention voided and rerun; both rosbags and live `sim_dr.csv` recorded.
   approach or breach the fence; no other law breaches it. (The 2026-10-08 shakedown
   is consistent — fuzzy crossed at 1.03 m — and is disclosed as prior observation;
   this amendment makes the prediction binding for the confirmatory session.)
+- **2026-10-22 — Amendment 3: course-pooled primary statistic + Pearson (added
+  BEFORE the confirmatory session; no confirmatory data exists).** The primary
+  pairwise-separable statistic is computed over pairs POOLED ACROSS BOTH courses
+  (rectangle and line), following the field-standard remedy for unstable
+  small-n rank statistics (H2RBench pools across tasks for the same reason;
+  arXiv 2609.24778). Pearson r is reported alongside Spearman/Kendall/MMRV,
+  completing the standard trio of the SIMPLER-lineage evaluators. Implemented
+  in sim/score_correlation.py (--sim2/--real2 pool a second course); adopted
+  from the literature, not from our data.

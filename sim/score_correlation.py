@@ -79,6 +79,15 @@ def mmrv(sim_vals, real_vals):
     return float(worst.mean())
 
 
+def pearson(a, b):
+    """Linear correlation of the raw performance values (field-standard trio
+    alongside Spearman and MMRV; see SIMPLER-lineage evaluators)."""
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    a, b = a - a.mean(), b - b.mean()
+    d = math.sqrt((a ** 2).sum() * (b ** 2).sum())
+    return float((a * b).sum() / d) if d > 0 else 0.0
+
+
 def kendall(a, b):
     n = len(a)
     conc = disc = 0
@@ -171,7 +180,7 @@ def load_side(root, run_filter=None, csvs=DEFAULT_CSVS):
 
 
 # ---------------------------------------------------------------- report
-def report(stats_sim, stats_real, label_a="sim", label_b="real"):
+def report(stats_sim, stats_real, label_a="sim", label_b="real", pooled_extra=None):
     names = sorted(set(stats_sim) & set(stats_real))
     dropped = sorted(set(stats_sim) ^ set(stats_real))
     if dropped:
@@ -192,6 +201,7 @@ def report(stats_sim, stats_real, label_a="sim", label_b="real"):
 
     rho, p = chance_p(rmse_a, rmse_b)
     tau = kendall(rmse_a, rmse_b)
+    pr = pearson(rmse_a, rmse_b)
     rv = mmrv(rmse_a, rmse_b)
 
     # PRIMARY at small n (SIMPLER-lineage practice): pairwise analysis over the
@@ -210,6 +220,10 @@ def report(stats_sim, stats_real, label_a="sim", label_b="real"):
                 ok = (rmse_a[i] - rmse_a[j]) * (rmse_b[i] - rmse_b[j]) > 0
                 sep_pairs.append((names[i], names[j], ok))
                 correct += ok
+    if pooled_extra:
+        for a_, b_, ok in pooled_extra:
+            sep_pairs.append((a_ + " [c2]", b_ + " [c2]", ok))
+            correct += ok
     if sep_pairs:
         k, m = correct, len(sep_pairs)
         p_binom = sum(math.comb(m, t) for t in range(k, m + 1)) / 2 ** m
@@ -219,11 +233,12 @@ def report(stats_sim, stats_real, label_a="sim", label_b="real"):
             print(f"   {a_} vs {b_}: {'agree' if ok else 'DISAGREE'}")
     else:
         print("\nPAIRWISE (primary): no pairs separable above noise on both sides")
+    return sep_pairs
     lo, med, hi = noise_floor_band(stats_sim, stats_real, names)
 
-    print(f"\nSpearman rho = {rho:+.3f}   Kendall tau = {tau:+.3f}"
-          f"   MMRV = {rv:.4f} (same units as the metric; 0 = orderings agree)"
-          f"   (n = {len(names)} controllers)")
+    print(f"\nSpearman rho = {rho:+.3f}   Pearson r = {pr:+.3f}   "
+          f"Kendall tau = {tau:+.3f}   MMRV = {rv:.4f} "
+          f"(metric units; 0 = orderings agree)   (n = {len(names)} controllers)")
     print(f"chance test: exact P(random ranking correlates >= observed) = {p:.4f}"
           f" -> {'BETTER THAN CHANCE' if p < 0.05 else 'not distinguishable from chance'}")
     print(f"noise floor: rho under perfect-agreement + measured run spreads = "
@@ -268,6 +283,22 @@ def self_test():
     print("self-test OK")
 
 
+def separable_pairs(stats_sim, stats_real):
+    """Just the separable-pair list for a course (used to pool across courses,
+    the H2RBench remedy for unstable small-n rank statistics)."""
+    names = sorted(set(stats_sim) & set(stats_real))
+    out = []
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            a_i, a_j = stats_sim[names[i]][0], stats_sim[names[j]][0]
+            b_i, b_j = stats_real[names[i]][0], stats_real[names[j]][0]
+            fa = stats_sim[names[i]][1] + stats_sim[names[j]][1] + 1e-9
+            fb = stats_real[names[i]][1] + stats_real[names[j]][1] + 1e-9
+            if abs(a_i - a_j) > fa and abs(b_i - b_j) > fb:
+                out.append((names[i], names[j], (a_i - a_j) * (b_i - b_j) > 0))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("dirs", nargs="*", help="<sim_dir> <real_dir>")
@@ -280,6 +311,8 @@ def main():
                     help="trajectory CSV for side B (default sim_gt.csv/traj.csv, "
                          "use sim_dr.csv for real-vehicle recordings)")
     ap.add_argument("--self-test", action="store_true")
+    ap.add_argument("--sim2", default=None, help="second course: sim dir (pairs pooled into the primary statistic)")
+    ap.add_argument("--real2", default=None, help="second course: real dir")
     a = ap.parse_args()
     csvs_a = (a.csv_a,) if a.csv_a else DEFAULT_CSVS
     csvs_b = (a.csv_b,) if a.csv_b else DEFAULT_CSVS
@@ -293,7 +326,11 @@ def main():
         return
     if len(a.dirs) != 2:
         ap.error("need <sim_dir> <real_dir> (or --split-seeds / --self-test)")
-    report(load_side(a.dirs[0], csvs=csvs_a), load_side(a.dirs[1], csvs=csvs_b))
+    extra = None
+    if a.sim2 and a.real2:
+        extra = separable_pairs(load_side(a.sim2, csvs=csvs_a), load_side(a.real2, csvs=csvs_b))
+        print(f"[course 2] {len(extra)} separable pairs pooled into the primary statistic")
+    report(load_side(a.dirs[0], csvs=csvs_a), load_side(a.dirs[1], csvs=csvs_b), pooled_extra=extra)
 
 
 if __name__ == "__main__":
