@@ -12,7 +12,7 @@ export PYTHONPATH="$BLUEROV_DR:$PYTHONPATH"
 if ps -eo comm,args | awk '$1 ~ /^python/ && /mavros_bridge/' | grep -q .; then echo "a bridge is already running"; exit 1; fi
 D=$OUT/$TAG; mkdir -p $D
 cd $REPO/sim
-timeout 200 $PY mavros_bridge.py --headless --control --pool intex --duration 110 > $D/bridge.log 2>&1 & BR=$!
+timeout 200 $PY mavros_bridge.py --headless --control --pool intex --duration 110 $BRIDGE_ARGS > $D/bridge.log 2>&1 & BR=$!
 for i in $(seq 1 60); do ros2 topic list 2>/dev/null | grep -q /mavros/imu/data && break; sleep 2; done
 $PY $BLUEROV_DR/bluerov_dr/dead_reckon.py --ros-args -p estimator_mode:=legacy_integrator > $D/dr.log 2>&1 & DR=$!
 sleep 4

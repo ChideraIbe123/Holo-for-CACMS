@@ -314,6 +314,49 @@ def colored(key, sigma):
     return val
 
 
+# Armed-state correlated noise (opt-in --armed-noise; DEFAULT OFF, twin unchanged).
+# Fitted 2026-10-25 from the two latched Oct-8 pool runs, post-latch windows
+# (~48 s each, armed-neutral floating; real_1008_bags on CACMS). Armed
+# electronics + water motion sit 50-80x above the disarmed STATIC_SIGMA floors
+# and are 90-96% lag-1 correlated — white floors cannot reproduce that texture
+# (the 3 scorecard fails: accel_x.w1, dvl_z.acf, rel_alt.ks). Injected only in
+# the armed-idle regime (effort < ARMED_IDLE_EFFORT); the windows are at the
+# surface, so the mid-column fraction awaits a fit from driving segments.
+ARMED_NOISE = False
+ARMED_IDLE_EFFORT = 0.05
+ARMED_AR = {    # channel: (sigma of correlated component, lag-1 autocorr)
+    'accel_x': (0.406, 0.961), 'accel_y': (0.513, 0.957),
+    'accel_z': (0.091, 0.922), 'gyro_z': (0.087, 0.942),
+    'dvl_z': (0.0228, 0.903), 'rel_alt': (0.0190, 0.925),
+}
+
+
+def armed_colored(key):
+    """AR(1) armed-state component, fitted stationary sigma and corner."""
+    sigma, a = ARMED_AR[key]
+    prev = _ar1_state.get('armed_' + key, 0.0)
+    val = a * prev + np.random.randn() * sigma * np.sqrt(1.0 - a * a)
+    _ar1_state['armed_' + key] = val
+    return val
+
+
+# Channels whose armed component persists at ALL effort levels. EMPTY after
+# iteration 2: always-on made accel_x.w1 WORSE (sim driving spread already
+# sufficient) and the tub armed float proved the fitted noise is POOL WATER
+# MOTION, not electronics (tub armed: accel_x 0.006, gyro_z 0.0004 — 70-220x
+# below the pool values; venue-conditioned, measured 2026-10-26), so it has no
+# business persisting into tub-venue driving. Idle-only is the final config.
+ARMED_ALWAYS = set()
+
+
+def armed_active(effort, ch=None):
+    if not ARMED_NOISE:
+        return False
+    if ch in ARMED_ALWAYS:
+        return True
+    return effort < ARMED_IDLE_EFFORT
+
+
 def perturb_quat_xyzw(q):
     """Compose q with a small Gaussian RPY rotation (attitude-estimate noise)."""
     r, p, y = (np.random.randn(3) * np.radians(ORIENTATION_NOISE_RPY_DEG))
@@ -399,6 +442,8 @@ class MavrosBridge:
                 colored('gyro_x', noise_sigma('gyro_x', E)),
                 colored('gyro_y', noise_sigma('gyro_y', E)),
                 colored('gyro_z', noise_sigma('gyro_z', E))]) / np.sqrt(2)
+            if armed_active(E):
+                gyro[2] += armed_colored('gyro_z')
 
         if GRAVITY_MODE == 'flip_gravity':
             # convert HoloOcean's flipped gravity term to real-IMU convention
@@ -430,7 +475,11 @@ class MavrosBridge:
             # (2 Hz sample-and-hold, milli-g quantization).
             if not hasattr(self, "_held_accel") or np.random.rand() < ACCEL_UPDATE_P:
                 sig = np.array(ACCEL_SIGMA_CONST) / np.sqrt(2 * ACCEL_UPDATE_P)
-                self._held_accel = np.round((accel + np.random.randn(3) * sig) / ACCEL_LSB) * ACCEL_LSB
+                armed = np.array([
+                    armed_colored('accel_x') if armed_active(self.effort, 'accel_x') else 0.0,
+                    armed_colored('accel_y') if armed_active(self.effort, 'accel_y') else 0.0,
+                    armed_colored('accel_z') if armed_active(self.effort, 'accel_z') else 0.0])
+                self._held_accel = np.round((accel + armed + np.random.randn(3) * sig) / ACCEL_LSB) * ACCEL_LSB
             accel = self._held_accel
         msg.linear_acceleration.x = float(accel[0])
         msg.linear_acceleration.y = float(accel[1])
@@ -492,6 +541,8 @@ class MavrosBridge:
                 colored('dvl_x', noise_sigma('dvl_x', E)),
                 colored('dvl_y', noise_sigma('dvl_y', E)),
                 colored('dvl_z', noise_sigma('dvl_z', E))]) / np.sqrt(2)
+            if armed_active(E):
+                v[2] += armed_colored('dvl_z')
         msg = TwistStamped()
         msg.header.stamp = self._stamp()
         msg.header.frame_id = DVL_FRAME_ID
@@ -531,6 +582,8 @@ class MavrosBridge:
         z = float(np.asarray(depth_data, dtype=float).flatten()[0])
         self._last_z = z
         rel_alt = REL_ALT_SIGN * (z - WATER_SURFACE_Z)
+        if NOISE_ENABLED and armed_active(self.effort, 'rel_alt'):
+            rel_alt += armed_colored('rel_alt')
         if NOISE_ENABLED and REL_ALT_QUANTIZATION > 0:
             rel_alt = round(rel_alt / REL_ALT_QUANTIZATION) * REL_ALT_QUANTIZATION
         msg = Float64()
@@ -609,12 +662,31 @@ def main():
     parser.add_argument('--dynamics', choices=['standard', 'builtin'], default='standard',
                         help="'standard' = exact 6-thruster BlueROV2 Fossen model (default); "
                              "'builtin' = HoloOcean's 8-thruster Heavy dynamics")
+    parser.add_argument('--armed-noise', action='store_true',
+                        help='opt-in (default off, twin unchanged): armed-state '
+                             'correlated sensor noise in the idle regime, fitted '
+                             'from the Oct-8 latched-run pool windows (ARMED_AR).')
+    parser.add_argument('--tether', default=None, metavar='FX,FY',
+                        help='opt-in (default off, twin unchanged): constant world-frame '
+                             'horizontal tether pull in newtons, applied at the CG. '
+                             'Models the mean cable drag/handling pull the real vehicle '
+                             'fights in the pool; fitted from drift observables, never '
+                             'from controller rankings.')
     args = parser.parse_args()
 
     if args.no_noise:
         NOISE_ENABLED = False
     SCRIPT_CRUISE, SCRIPT_TURN = args.cruise, args.turn
     DVL_FRAME_MODE = args.dvl_frame
+    if args.armed_noise:
+        global ARMED_NOISE
+        ARMED_NOISE = True
+        print('[bridge] ARMED-STATE noise on (idle regime, fitted 2026-10-25)')
+    tether_f = None
+    if args.tether:
+        fx, fy = (float(v) for v in args.tether.split(','))
+        tether_f = np.array([fx, fy, 0.0])
+        print(f'[bridge] TETHER force on: world ({fx:+.2f}, {fy:+.2f}) N')
 
     rclpy.init()
     node = rclpy.create_node('holoocean_mavros_bridge')
@@ -805,6 +877,10 @@ def main():
                             tau_add[4] = ATTREF_GAIN * (att_ref[1] - nu[4])
                         if yaw_ref is not None and heave_ref is not None:
                             tau_add[2] = HEAVEREF_GAIN * (heave_ref - nu[2])
+                        if tether_f is not None:
+                            if tau_add is None:
+                                tau_add = np.zeros(6)
+                            tau_add[:3] += R.T @ tether_f
                         nu_dot = model.step(cmd6, quat, nu,
                                             z_world=float(last_dyn[8]),
                                             surface_z=WATER_SURFACE_Z, mixer=mixer,

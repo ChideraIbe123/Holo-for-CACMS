@@ -46,6 +46,7 @@ class Runner:
         node.create_subscription(Odometry, '/deadreckon/odom', self.on_odom, 50)
         self.t0 = None
         self.finished = False
+        self.last_act = -1e9
         self.stop_sent = 0
         self.logf = None
         if a.log:
@@ -76,6 +77,10 @@ class Runner:
         t -= self.t0
         if self.finished:
             return
+        if self.a.max_rate > 0:
+            if t - self.last_act < 1.0 / self.a.max_rate:
+                return
+            self.last_act = t
         u, r, done = self.trk.update(t, p.x, p.y, yaw_from_quat(msg.pose.pose.orientation))
         if done or (self.a.duration and t > self.a.duration):
             self.finished = True
@@ -116,6 +121,10 @@ def main():
     ap.add_argument('--yaw-sign', type=float, default=-1.0)
     ap.add_argument('--no-rotate', action='store_true', help='do not rotate the course to the start heading')
     ap.add_argument('--depth-target', type=float, default=None, help='hold this depth (m, negative down) with a P law on the up-velocity')
+    ap.add_argument('--max-rate', type=float, default=0.0,
+                    help='diagnostic: cap the control loop at this rate (Hz) by '
+                         'dropping odom messages; 0 (default) = act on every message. '
+                         'Emulates the real-session estimator rate (~10.5 Hz).')
     ap.add_argument('--cmd-topic', default='/cmd_vel')
     ap.add_argument('--log', default=None)
     a = ap.parse_args()
