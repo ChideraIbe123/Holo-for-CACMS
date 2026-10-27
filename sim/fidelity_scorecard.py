@@ -2,14 +2,23 @@
 """Digital-twin fidelity scorecard with a real-to-real reference floor.
 
 Compares SIM runs against REAL runs using distributional distances on the sensor
-streams, and judges fidelity by the reference-floor criterion: the twin passes a
-channel if sim-to-real distances are statistically indistinguishable from
-real-to-real distances (Mann-Whitney U, two-sided).
+streams. PRIMARY criterion (conformal): a check passes if the median sim-to-real
+distance is <= the alpha-quantile of the leave-one-out real-to-real medians.
+SECONDARY column: Mann-Whitney U on the two distance sets.
 
 Distances per channel (gyro xyz, accel xyz, dvl xyz, rel_alt):
-  - KS statistic and Wasserstein-1 on INCREMENT distributions (motion-robust)
-  - log-spectral L2 distance on Welch PSDs
-  - RBF-MMD on 5 s window feature vectors (std of every channel per window)
+  - KS statistic and trimmed (1-99%) quantile-W1 on INCREMENT distributions
+    (np.diff of the whole file; a constant offset or datum bias is INVISIBLE
+    to these by construction — they score increment texture, not levels)
+  - log-spectral L2 distance on Welch PSDs of the raw, per-segment de-meaned
+    signal (bins compared by index, so sim and real sample rates must match)
+  - ACF distance (lags 1-10) on the increments
+  - RBF-MMD on 5 s window feature vectors (std of the 6 IMU + 3 DVL channels;
+    rel_alt is not part of the MMD features)
+Note: with n real bags the conformal margin is quantile(alpha) of n values, so
+for n < 1/(1-alpha) it is an interpolated near-maximum, not a calibrated
+conformal rank. There is no multiple-comparison correction across checks and
+no sim-side variance model: run several seeds and report the spread.
 
 Usage: python3 fidelity_scorecard.py --real real1.npz real2.npz ... --sim sim1.npz ...
        [--out report_prefix]
@@ -35,7 +44,17 @@ def increments(run, arr_key, col):
     a = run[arr_key]
     if len(a) < 20:
         return None
-    return np.diff(a[:, col])
+    d = np.diff(a[:, col])
+    d = d[np.isfinite(d)]          # NaN/inf would otherwise fail the check silently
+    return d if len(d) >= 19 else None
+
+
+def sample_rate(run, arr_key):
+    """Mean rate = samples / span. (Median dt is useless here: the real DVL
+    log_time stamps arrive in bursts and every DVL measurement is logged twice.)"""
+    t = run[arr_key][:, 0]
+    span = float(t[-1] - t[0]) if len(t) > 1 else 0.0
+    return float((len(t) - 1) / span) if span > 0 else float("nan")
 
 
 def ks_stat(a, b):
@@ -69,12 +88,26 @@ def log_psd(x, fs):
     return np.log10(np.mean(ps, axis=0) + 1e-12)
 
 
-def spectral_dist(a, b, fs=10.0):
-    pa, pb = log_psd(a, fs), log_psd(b, fs)
+def spectral_dist(a, b, fs_a=None, fs_b=None):
+    """Bins are compared by INDEX, which is only meaningful when both signals
+    share a sample rate; warn once per channel if they differ by > 25%."""
+    if (fs_a and fs_b and np.isfinite(fs_a) and np.isfinite(fs_b)
+            and abs(fs_a - fs_b) > 0.25 * max(fs_a, fs_b)):
+        key = (round(fs_a, 1), round(fs_b, 1))
+        if key not in _RATE_WARNED:
+            _RATE_WARNED.add(key)
+            print(f"[scorecard] WARNING spec: sample rates differ ({fs_a:.1f} vs {fs_b:.1f} Hz); "
+                  f"bin-by-index comparison is not frequency-aligned")
+    a = np.asarray(a, dtype=float); b = np.asarray(b, dtype=float)
+    a, b = a[np.isfinite(a)], b[np.isfinite(b)]
+    pa, pb = log_psd(a, 0.0), log_psd(b, 0.0)
     if pa is None or pb is None:
         return None
     n = min(len(pa), len(pb))
     return float(np.sqrt(np.mean((pa[:n] - pb[:n]) ** 2)))
+
+
+_RATE_WARNED = set()
 
 
 def window_features(run, win=5.0):
@@ -172,7 +205,8 @@ def pair_distances(runs_a, runs_b, exclude_same=False):
                 continue
             out[name]["ks"].append(ks_stat(da, db))
             out[name]["w1"].append(wasserstein1(da, db))
-            sd = spectral_dist(ra[key][:, col], rb[key][:, col])
+            sd = spectral_dist(ra[key][:, col], rb[key][:, col],
+                               sample_rate(ra, key), sample_rate(rb, key))
             if sd is not None:
                 out[name]["spec"].append(sd)
             ad = acf_dist(da, db)
@@ -222,6 +256,11 @@ def main():
 
     def judge(key, a, b):
         nonlocal conf_pass, mwu_pass, total
+        a = [v for v in a if np.isfinite(v)]
+        b = [v for v in b if np.isfinite(v)]
+        if not a or not b:
+            print(f"[scorecard] WARNING {key}: no finite distances, check skipped")
+            return
         med_a, med_b = float(np.median(a)), float(np.median(b))
         p = mannwhitney_p(a, b)
         ok_mwu = (p > 0.05) or (med_b <= med_a)

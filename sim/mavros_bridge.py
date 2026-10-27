@@ -27,6 +27,7 @@ import holoocean
 import rclpy
 
 from bluerov2_standard_model import BlueROV2StandardModel
+from bluerov2_standard_model import static_float_z as _static_float_z
 from sensor_msgs.msg import Imu, FluidPressure
 from geometry_msgs.msg import TwistStamped
 from std_msgs.msg import Float64, Float32, Bool
@@ -129,7 +130,8 @@ GT_CHILD_FRAME_ID = 'base_link'
 NOISE_ENABLED = True
 # Excitation-dependent noise: sigma(E) = a + b*E, E = mean |normalized thruster cmd|.
 # Fitted from 48 five-second windows across 5 real bags (fit_noise_model.py).
-# Applied in the bridge (engine sigmas are zeroed) so sigma can follow effort.
+# Applied in the bridge (ALL engine sigmas are zeroed since v18, depth included)
+# so sigma can follow effort and venue.
 # v12: gyro/dvl sigmas REVERTED to v10 — the v11 raise fought the ACF metrics
 # (noisier increments = further from real's +0.7 lag-1). Missing variance is the
 # low-freq rocking band, retained by the shorter ref LP instead. Accel kept at v11.
@@ -174,6 +176,29 @@ def noise_sigma(ch, effort):
     return a + b * effort
 ORIENTATION_NOISE_RPY_DEG = [0.32, 0.34, 1.39]   # DynamicsSensor is noiseless in-engine
 REL_ALT_QUANTIZATION = 0.001                     # m; real topic has 1 mm granularity
+# v18 (2026-10-27): the depth sensor's white noise now lives HERE, not in the
+# scenario (DepthSensor Sigma was 0.011 in-engine — the only engine sigma not
+# zeroed, and it was pool-sized: the tub FCU rel_alt floor is 2.5 mm white,
+# lag-1 0.09, on a 1 mm grid; measured on both tub float bags 2026-10-27).
+# Moving it in-bridge makes it venue-conditioned and --seed reproducible.
+# 'pool' keeps the twin's previous 0.011 (statistically identical to the old
+# engine noise); 'tub' is the measured tub floor.
+REL_ALT_SIGMA_BY_VENUE = {'pool': 0.011, 'tub': 0.0025}
+REL_ALT_SIGMA = REL_ALT_SIGMA_BY_VENUE['pool']
+# Idle accel floor per venue (effort < STATIC_EFFORT_THRESH). The default
+# ACCEL_SIGMA_CONST is a pool multi-bag mean (0.18 m/s2) and is NOT effort
+# gated, so a sim vehicle at rest in the tub carried 50x the real tub floor
+# (0.006 m/s2 total std, 89% zero increments on the 1 mg grid). 'pool' = None
+# keeps the previous behaviour; 'tub' = measured tub armed-float std.
+STATIC_ACCEL_SIGMA_BY_VENUE = {'pool': None, 'tub': [0.0061, 0.0052, 0.0058]}
+STATIC_ACCEL_SIGMA = None
+# Depth-sensor socket offset from the DynamicsSensor COM origin (m, world z).
+# MEASURED in Phase A (2026-10-27): ground-truth odometry z recorded next to
+# the noiseless rel_alt gave rel_alt - z_COM = +0.0600 m, constant to 0.1 mm
+# (the earlier "~15 mm" was inferred from float means skewed by the servo).
+# The sim therefore reads -0.0606 at the static float point (-0.1206 COM);
+# the tub FCU reads -0.0932 -> tub datum bias = -0.0326 (--rel-alt-bias).
+DEPTH_SOCKET_OFFSET = 0.060
 ACCEL_LSB = 0.00980665                           # real accel is quantized at 1 milli-g
 # The real 10 Hz accel topic is a SAMPLE-AND-HOLD of a ~2 Hz internal update
 # (measured: 81% of consecutive samples identical, variance arrives in bursts).
@@ -324,11 +349,51 @@ def colored(key, sigma):
 # surface, so the mid-column fraction awaits a fit from driving segments.
 ARMED_NOISE = False
 ARMED_IDLE_EFFORT = 0.05
-ARMED_AR = {    # channel: (sigma of correlated component, lag-1 autocorr)
-    'accel_x': (0.406, 0.961), 'accel_y': (0.513, 0.957),
-    'accel_z': (0.091, 0.922), 'gyro_z': (0.087, 0.942),
-    'dvl_z': (0.0228, 0.903), 'rel_alt': (0.0190, 0.925),
+# --accel-lp TAU: low-pass the PHYSICAL accel before sample-hold+noise. The real
+# FCU reports a heavily filtered accel: tub bags show half of all samples within
+# +-0.005 m/s2 of a constant while the raw dynamics swing (centered real std
+# 0.34 = spike+tails vs sim 0.97 broad — the whole accel_x.w1 gap). Opt-in.
+ACCEL_LP_TAU = 0.0
+# --depth-servo GAIN: absolute-depth servo during replay — gentle heave force
+# toward the real rel_alt profile (already in the replay npz). The rate-only
+# heave servo lets slow drift accumulate: real depth middle-50% spans 6 mm,
+# sim wanders 34 mm (rel_alt.ks gap). Opt-in.
+DEPTH_SERVO_GAIN = 0.0
+DEPTH_SERVO_DAMP = 0.0   # set from gain in main(): near-critical PD damping
+# --rel-alt-bias: constant datum calibration on the rel_alt measurement. The
+# real FCU rel_alt zero is an arbitrary EKF/sensor datum (vehicle floating
+# reads -0.093); the sim reports vehicle-origin z (floats at -0.065). The
+# -0.0276 m difference is sensor placement, not dynamics. Fitted from the
+# float-profile equilibria (base runs vs tub bags), 2026-10-26. Opt-in.
+REL_ALT_BIAS = 0.0
+# --armed-rel-alt-scale: the ARMED_AR rel_alt sigma (0.019) is POOL water
+# motion; the tub armed float shows 0.0025. Scale to 0 for tub-venue scoring.
+ARMED_REL_ALT_SCALE = 1.0
+# v18: VENUE-CONDITIONED armed tables (--venue). The pool table is the Oct-8
+# pool fit (water motion of the big pool). The tub table is the measured tub
+# armed float (rostest_floating_armed, 2026-10-27): stationary std and lag-1
+# per channel — 70-400x below the pool values. Scoring the tub bags with the
+# pool table injected pool water motion into a tub comparison (armed2-8).
+# armed_colored() with sigma 0 returns 0, so a zero table is a clean no-op.
+ARMED_AR_BY_VENUE = {
+    'pool': {    # channel: (sigma of correlated component, lag-1 autocorr)
+        'accel_x': (0.406, 0.961), 'accel_y': (0.513, 0.957),
+        'accel_z': (0.091, 0.922), 'gyro_z': (0.087, 0.942),
+        'dvl_z': (0.0228, 0.903), 'rel_alt': (0.0190, 0.925),
+    },
+    # tub: the ARMED float is no noisier than the UNARMED one (accel_x 0.0061
+    # vs 0.0090, rel_alt 2.50 vs 2.61 mm, gyro_z 0.0004 vs 0.0024, dvl_z 6e-5
+    # vs 5.4e-4), so the armed EXCESS is nil: the tub idle floors (STATIC_SIGMA,
+    # STATIC_ACCEL_SIGMA, REL_ALT_SIGMA) already carry the whole tub float and
+    # --armed-noise adds nothing in this venue (a non-zero tub table double-
+    # counted the floor: smoke test B1 gave sqrt(2) x the real std).
+    'tub': {
+        'accel_x': (0.0, 0.0), 'accel_y': (0.0, 0.0), 'accel_z': (0.0, 0.0),
+        'gyro_z': (0.0, 0.0), 'dvl_z': (0.0, 0.0), 'rel_alt': (0.0, 0.0),
+    },
 }
+VENUE = 'pool'
+ARMED_AR = ARMED_AR_BY_VENUE[VENUE]
 
 
 def armed_colored(key):
@@ -454,6 +519,12 @@ class MavrosBridge:
             rot_m = quat_to_rot_matrix_xyzw(self.last_quat_xyzw)   # body -> world
             accel = accel + rot_m.T @ np.array([0.0, 0.0, GRAVITY])
 
+        if ACCEL_LP_TAU > 0:
+            alpha_lp = 0.1 / (ACCEL_LP_TAU + 0.1)   # 10 Hz topic
+            if not hasattr(self, '_accel_lp'):
+                self._accel_lp = accel.copy()
+            self._accel_lp = self._accel_lp + alpha_lp * (accel - self._accel_lp)
+            accel = self._accel_lp
         msg = Imu()
         msg.header.stamp = self._stamp()
         msg.header.frame_id = IMU_FRAME_ID
@@ -474,7 +545,10 @@ class MavrosBridge:
             # excitation model on every accel metric) plus the sensor's real behavior
             # (2 Hz sample-and-hold, milli-g quantization).
             if not hasattr(self, "_held_accel") or np.random.rand() < ACCEL_UPDATE_P:
-                sig = np.array(ACCEL_SIGMA_CONST) / np.sqrt(2 * ACCEL_UPDATE_P)
+                if STATIC_ACCEL_SIGMA is not None and self.effort < STATIC_EFFORT_THRESH:
+                    sig = np.array(STATIC_ACCEL_SIGMA)   # v18: venue idle floor
+                else:
+                    sig = np.array(ACCEL_SIGMA_CONST) / np.sqrt(2 * ACCEL_UPDATE_P)
                 armed = np.array([
                     armed_colored('accel_x') if armed_active(self.effort, 'accel_x') else 0.0,
                     armed_colored('accel_y') if armed_active(self.effort, 'accel_y') else 0.0,
@@ -581,9 +655,11 @@ class MavrosBridge:
     def on_depth(self, depth_data):
         z = float(np.asarray(depth_data, dtype=float).flatten()[0])
         self._last_z = z
-        rel_alt = REL_ALT_SIGN * (z - WATER_SURFACE_Z)
+        rel_alt = REL_ALT_SIGN * (z - WATER_SURFACE_Z) + REL_ALT_BIAS
+        if NOISE_ENABLED and REL_ALT_SIGMA > 0:
+            rel_alt += np.random.randn() * REL_ALT_SIGMA   # v18: sensor floor (was engine Sigma)
         if NOISE_ENABLED and armed_active(self.effort, 'rel_alt'):
-            rel_alt += armed_colored('rel_alt')
+            rel_alt += ARMED_REL_ALT_SCALE * armed_colored('rel_alt')
         if NOISE_ENABLED and REL_ALT_QUANTIZATION > 0:
             rel_alt = round(rel_alt / REL_ALT_QUANTIZATION) * REL_ALT_QUANTIZATION
         msg = Float64()
@@ -662,6 +738,32 @@ def main():
     parser.add_argument('--dynamics', choices=['standard', 'builtin'], default='standard',
                         help="'standard' = exact 6-thruster BlueROV2 Fossen model (default); "
                              "'builtin' = HoloOcean's 8-thruster Heavy dynamics")
+    parser.add_argument('--accel-lp', type=float, default=0.0, metavar='TAU',
+                        help='opt-in: low-pass the physical accel (s) before '
+                             'sample-hold, modeling the FCU`s filtered reporting')
+    parser.add_argument('--depth-servo', type=float, default=0.0, metavar='GAIN',
+                        help='opt-in: absolute-depth servo toward the replay`s '
+                             'real rel_alt profile (N/m)')
+    parser.add_argument('--depth-servo-damp', type=float, default=-1.0,
+                        metavar='D',
+                        help='heave damping N*s/m (-1 = auto near-critical '
+                             'from gain). The scorecard scores INCREMENTS, so '
+                             'bobbing velocity, not amplitude, is what costs: '
+                             'soft spring + heavy damper beats stiff spring)')
+    parser.add_argument('--rel-alt-bias', type=float, default=0.0, metavar='B',
+                        help='opt-in: constant datum calibration added to the '
+                             'rel_alt measurement and servo reference (m)')
+    parser.add_argument('--armed-rel-alt-scale', type=float, default=1.0,
+                        metavar='S',
+                        help='DEPRECATED (use --venue tub): scale on the armed-state '
+                             'rel_alt noise')
+    parser.add_argument('--venue', choices=('pool', 'tub'), default='pool',
+                        help='sensor-floor venue: rel_alt sigma, idle accel floor and '
+                             'the --armed-noise table (pool = previous twin; tub = '
+                             'measured tub floors, 2026-10-27)')
+    parser.add_argument('--seed', type=int, default=None,
+                        help='seed numpy RNG (all sensor noise is bridge-side since v18, '
+                             'so a seeded run is reproducible)')
     parser.add_argument('--armed-noise', action='store_true',
                         help='opt-in (default off, twin unchanged): armed-state '
                              'correlated sensor noise in the idle regime, fitted '
@@ -678,10 +780,48 @@ def main():
         NOISE_ENABLED = False
     SCRIPT_CRUISE, SCRIPT_TURN = args.cruise, args.turn
     DVL_FRAME_MODE = args.dvl_frame
+    global ACCEL_LP_TAU, DEPTH_SERVO_GAIN, DEPTH_SERVO_DAMP
+    global REL_ALT_BIAS, ARMED_REL_ALT_SCALE
+    global VENUE, ARMED_AR, REL_ALT_SIGMA, STATIC_ACCEL_SIGMA
+    global YAWREF_GAIN, ATTREF_GAIN, HEAVEREF_GAIN
+    if args.seed is not None:
+        np.random.seed(args.seed)
+        print('[bridge] numpy RNG seeded: %d' % args.seed)
+    VENUE = args.venue
+    ARMED_AR = ARMED_AR_BY_VENUE[VENUE]
+    REL_ALT_SIGMA = REL_ALT_SIGMA_BY_VENUE[VENUE]
+    STATIC_ACCEL_SIGMA = STATIC_ACCEL_SIGMA_BY_VENUE[VENUE]
+    print('[bridge] venue %s: rel_alt sigma %.4f, idle accel floor %s'
+          % (VENUE, REL_ALT_SIGMA, STATIC_ACCEL_SIGMA))
+    ACCEL_LP_TAU = args.accel_lp
+    DEPTH_SERVO_GAIN = args.depth_servo
+    if args.depth_servo_damp >= 0:
+        DEPTH_SERVO_DAMP = args.depth_servo_damp
+    else:
+        # v18: near-critical against the TOTAL heave stiffness (surface spring
+        # BUOYANCY/0.25 = 459 N/m + servo gain) and the wet heave mass 26.07 kg,
+        # net of the model's own linear heave damping (8 N*s/m) and the heave-rate
+        # servo (HEAVEREF_GAIN). The old 1.6*sqrt(20*G) ignored the buoyancy spring.
+        if DEPTH_SERVO_GAIN > 0:
+            _c_crit = 2.0 * np.sqrt((459.2 + DEPTH_SERVO_GAIN) * 26.07)
+            DEPTH_SERVO_DAMP = max(0.0, 0.9 * _c_crit - 8.0 - HEAVEREF_GAIN)
+        else:
+            DEPTH_SERVO_DAMP = 0.0
+    REL_ALT_BIAS = args.rel_alt_bias
+    ARMED_REL_ALT_SCALE = args.armed_rel_alt_scale
+    if ACCEL_LP_TAU > 0:
+        print('[bridge] accel FCU low-pass on: tau %.2f s' % ACCEL_LP_TAU)
+    if DEPTH_SERVO_GAIN > 0:
+        print('[bridge] absolute depth servo on: gain %.1f damp %.1f'
+              % (DEPTH_SERVO_GAIN, DEPTH_SERVO_DAMP))
+    if REL_ALT_BIAS != 0.0:
+        print('[bridge] rel_alt datum bias: %+.4f m' % REL_ALT_BIAS)
+    if ARMED_REL_ALT_SCALE != 1.0:
+        print('[bridge] armed rel_alt scale: %.2f' % ARMED_REL_ALT_SCALE)
     if args.armed_noise:
         global ARMED_NOISE
         ARMED_NOISE = True
-        print('[bridge] ARMED-STATE noise on (idle regime, fitted 2026-10-25)')
+        print('[bridge] ARMED-STATE noise on (idle regime, %s table)' % VENUE)
     tether_f = None
     if args.tether:
         fx, fy = (float(v) for v in args.tether.split(','))
@@ -733,10 +873,10 @@ def main():
 
     node.get_logger().info(f'Starting HoloOcean ({SCENARIO_JSON}), headless={args.headless}')
     import time as _time
-    global YAWREF_GAIN, ATTREF_GAIN, HEAVEREF_GAIN
     if args.no_servos:
         YAWREF_GAIN = ATTREF_GAIN = HEAVEREF_GAIN = 0.0
-        print('[bridge] ABLATION: rate/heave servos disabled')
+        DEPTH_SERVO_GAIN = DEPTH_SERVO_DAMP = 0.0
+        print('[bridge] ABLATION: rate/heave/depth servos disabled')
 
     replay = None
     if args.replay:
@@ -747,9 +887,13 @@ def main():
                   'altref': (rp['t_alt'], rp['alt']) if 't_alt' in rp and len(rp['t_alt']) > 5 else None}
         for agent in scenario['agents']:
             if agent['agent_name'] == AGENT_NAME:
-                # HYBRID: clamp spawn depth so the vehicle stays submerged (surface
-                # bobbing wrecked the depth spectrum when profiles spawned at z0~-0.13)
-                agent['location'][2] = min(replay['z0'], -0.5)
+                # v18: surface-start profiles spawn AT the model's static float point
+                # (the old min(z0, -0.5) clamp was a workaround for the undamped
+                # surface ring-down, fixed in the model; the 0.4 m rise + 15 s
+                # ring-down it caused sat inside the first 60% of every 24 s
+                # driving-profile recording). Deep starts keep z0.
+                agent['location'][2] = (_static_float_z(WATER_SURFACE_Z)
+                                        if replay['z0'] > -0.3 else replay['z0'])
         print(f"[bridge] replaying real command profile: {args.replay} "
               f"({len(replay['t'])} cmds, {replay['t'][-1]:.0f}s, spawn z {replay['z0']:.2f})")
 
@@ -783,6 +927,9 @@ def main():
             if agent['agent_name'] == AGENT_NAME:
                 agent['location'] = list(intex_pool.SPAWN)
                 agent['rotation'] = [0, 0, 0]
+                if replay is not None:   # v18: same float-point spawn rule in the pool
+                    agent['location'][2] = (_static_float_z(WATER_SURFACE_Z)
+                                            if replay['z0'] > -0.3 else replay['z0'])
         print('[bridge] pool: Intex 26770 twin (4x2 m, 1.05 m water) — in-pool spawn')
 
     if model is not None:
@@ -877,6 +1024,22 @@ def main():
                             tau_add[4] = ATTREF_GAIN * (att_ref[1] - nu[4])
                         if yaw_ref is not None and heave_ref is not None:
                             tau_add[2] = HEAVEREF_GAIN * (heave_ref - nu[2])
+                        if (DEPTH_SERVO_GAIN > 0 and replay is not None
+                                and replay['altref'] is not None):
+                            if tau_add is None:
+                                tau_add = np.zeros(6)
+                            ta_d, al_d = replay['altref']
+                            alt_ref_now = float(np.interp(t, ta_d, al_d))
+                            # v18: close the loop on the CLEAN dynamics z expressed
+                            # in the sensor datum (COM z + measured socket offset).
+                            # armed7/8 closed on bridge._last_z, which carried the
+                            # 11 mm engine sensor noise -> ~1-3 N of random heave
+                            # force chatter that leaked into accel increments.
+                            z_servo = float(last_dyn[8]) + DEPTH_SOCKET_OFFSET
+                            alt_now = (REL_ALT_SIGN * (z_servo - WATER_SURFACE_Z)
+                                       + REL_ALT_BIAS)
+                            tau_add[2] += (DEPTH_SERVO_GAIN * (alt_ref_now - alt_now)
+                                           - DEPTH_SERVO_DAMP * nu[2])
                         if tether_f is not None:
                             if tau_add is None:
                                 tau_add = np.zeros(6)

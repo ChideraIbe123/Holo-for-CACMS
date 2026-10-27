@@ -51,6 +51,25 @@ D_QUAD = D_QUAD * AXIS_DRAG_CORR
 # thrust gives the BlueROV2's documented ~1.5 m/s top speed with Wu's drag.
 THRUST_SCALE = 0.55
 DRAG_SCALE = 1.0               # scales all damping
+# v18 (2026-10-27): SURFACE heave damping. Wu's heave damping (8 N*s/m linear
+# after the tub correction) is a deep-water value; against the surface
+# buoyancy spring BUOYANCY/SURFACE_TAPER = 459 N/m and the 26.07 kg wet heave
+# mass it gives zeta = 0.036, so the floating vehicle rang at 0.67 Hz for
+# ~15 s after every surface arrival (Phase A measurement: ring-down from the
+# spawn rise lasted to sim t = 19.6 s; the real vehicle at the surface is
+# heavily damped by wave radiation + the frame's flat-plate drag). This term
+# is active only within SURFACE_DAMP_FADE below full submersion and fades to
+# zero by then, so the mid-column heave drag calibrated by tub_sysid (v17) is
+# untouched. Value chosen for zeta ~ 0.9 of the surface mode; it is a design
+# target, not a scorecard fit.
+SURFACE_TAPER = 0.25           # m, hull height over which buoyancy tapers
+SURFACE_HEAVE_DAMP = 190.0     # N*s/m, extra linear heave damping at the surface
+SURFACE_DAMP_FADE = 0.30       # m below full submersion where it reaches zero
+
+
+def static_float_z(surface_z=0.0):
+    """World z at which the taper balances weight (the static float point)."""
+    return surface_z + SURFACE_TAPER / 2.0 - SURFACE_TAPER * WEIGHT / BUOYANCY
 
 # Thruster geometry, STANDARD config (6 × T200). Positions (m) and unit
 # directions in body FLU. T1-T4 vectored ±45° in the horizontal plane,
@@ -104,10 +123,9 @@ ARDUSUB_DIR = np.array([
 # Effective per-axis sign of the REAL vehicle's command->motion mapping, recovered
 # from data (infer_signs_teleop.py on the March obstacle/river bags, which have rich
 # sway+yaw): surge +, sway +, YAW INVERTED (teleop yaw cmd vs gyro_z: -0.73, all bags,
-# ~5% sign agreement). Applied to the replay (ardusub-mixed) tau so replayed real
-# commands turn the way the real vehicle turned. Root cause (wiring vs yaw convention)
-# is unresolved but irrelevant to matching the mapping.
-EFFECTIVE_SIGN = np.array([1.0, 1.0, 1.0, 1.0, 1.0, -1.0])  # surge,sway,heave,roll,pitch,yaw
+# ~5% sign agreement). The yaw inversion is applied in the BRIDGE (YAW_CMD_SIGN in the
+# control path, YAWREF_SIGN in the replay yaw-rate servo), not here: the former
+# EFFECTIVE_SIGN array in this module was never referenced and was removed (v18).
 
 
 class BlueROV2StandardModel:
@@ -167,16 +185,16 @@ class BlueROV2StandardModel:
             # for yaw vs ArduSub's real mixing; verify_yaw_fix.py -> ~0 corr). The
             # yaw-sign finding is applied in the CONTROL path instead (bridge autopilot).
         if tau_add is not None:
-            # additive body wrench on top of the thruster/setpoint forces — used by
-            # the replay yaw-rate servo (the degenerate mixer produces ~no yaw
-            # moment, so the servo supplies the moment that tracks the bag's
-            # measured yaw rate; surge/heave stay thruster-driven)
+            # additive body wrench on top of the thruster/setpoint forces — the
+            # bridge's replay servos (yaw-rate, roll/pitch-rate, heave-rate and the
+            # opt-in absolute-depth servo) and the opt-in tether pull. Surge/sway
+            # stay thruster-driven.
             tau += np.asarray(tau_add, dtype=float)
 
         # Restoring forces: gravity & buoyancy rotated into body frame (FLU, z up).
         # Buoyancy tapers to zero as the hull breaches the surface (vehicle
         # height ~0.25 m), so the model floats AT the surface like the real one.
-        submerged = np.clip((surface_z - z_world + 0.125) / 0.25, 0.0, 1.0)
+        submerged = np.clip((surface_z - z_world + SURFACE_TAPER / 2.0) / SURFACE_TAPER, 0.0, 1.0)
         R = _quat_to_rot(quat_xyzw)            # body -> world
         g_world = np.array([0.0, 0.0, -WEIGHT])
         b_world = np.array([0.0, 0.0, BUOYANCY * submerged])
@@ -187,6 +205,11 @@ class BlueROV2StandardModel:
         # Coriolis (rigid body + added mass, diagonal approximation) and damping
         tau -= _coriolis(nu) @ nu
         damping = DRAG_SCALE * (D_LIN + D_QUAD * np.abs(nu))
+        # v18: surface heave damping (see SURFACE_HEAVE_DAMP); fades out with
+        # depth below full submersion so deep-water heave drag is unchanged
+        below_full = (surface_z - z_world) - SURFACE_TAPER / 2.0
+        surf = np.clip(1.0 - below_full / SURFACE_DAMP_FADE, 0.0, 1.0)
+        damping[2] += SURFACE_HEAVE_DAMP * surf
         tau -= damping * nu
 
         return self.M_inv @ tau
