@@ -114,3 +114,44 @@ intervention voided and rerun; both rosbags and live `sim_dr.csv` recorded.
   completing the standard trio of the SIMPLER-lineage evaluators. Implemented
   in sim/score_correlation.py (--sim2/--real2 pool a second course); adopted
   from the literature, not from our data.
+- **2026-10-28 — Amendment 4: entrant set expanded to seven; v18 predictions
+  frozen (added BEFORE the confirmatory session; no confirmatory data exists).**
+  (a) TWO ENTRANTS ADDED, chosen from the literature (mechanism diversity per
+  the ranking-validation field standard), not from our data; the lab's learned
+  controllers (ANFIS-DDPG, PPO) are unavailable for the session. `smc` — the
+  boundary-layer sliding-mode heading law of von Benzon et al. 2022 (JMSE
+  10(12) 1898 sec 7.1, Table 6 yaw gains unchanged), a port of the original
+  stand-in table's sixth entrant to the shared tracker, restoring the
+  robust-control family. `alos` — adaptive LOS (Fossen, Pettersen & Galeazzi,
+  IEEE TCST 2015), crab-angle estimation (gamma=0.3, beta clamp 0.6 rad;
+  delta=0.4 and kpsi=1.4 matching los/ilos), adding the adaptive family.
+  Controller code: commit `83d3aec`; all seven laws pass `test_tracker.py` on
+  both courses.
+  (b) TWIN RE-FREEZE UNDER v18. Since Amendment 1 the twin received
+  measurement-chain and surface-dynamics fixes (v18: engine depth-sensor noise
+  relocated into the bridge and venue-conditioned, surface heave damping,
+  spawn at float point, seeded bit-reproducible runs; fidelity 41/41 on all 4
+  seeds in the matched-venue configuration). THE BINDING SIM PREDICTION is
+  regenerated under v18: 4 seeds (`--seed 1..4 --venue pool`), Intex pool
+  twin, both courses, RMSE (m):
+
+  | rect rank | law | RMSE | ±seed |  | line rank | law | RMSE | ±seed |
+  |---|---|---|---|---|---|---|---|---|
+  | 1 | pursuit | 0.1431 | 0.0012 |  | 1 | los | 0.1343 | 0.0017 |
+  | 2 | los | 0.1499 | 0.0016 |  | 2 | alos | 0.1430 | 0.0027 |
+  | 3 | alos | 0.1591 | 0.0032 |  | 3 | fuzzy_lab | 0.1467 | 0.0031 |
+  | 4 | smc | 0.1676 | 0.0024 |  | 4 | ilos | 0.1510 | 0.0010 |
+  | 5 | ilos | 0.1707 | 0.0009 |  | 5 | pursuit | 0.1780 | 0.0024 |
+  | 6 | p | 0.1769 | 0.0031 |  | 6 | smc | 0.2170 | 0.0037 |
+  | 7 | fuzzy_lab | 0.2180 | 0.0019 |  | 7 | p | 0.2241 | 0.0024 |
+
+  CONSISTENCY DISCLOSURE: the five incumbent laws keep their Amendment-1 rect
+  order and their 2026-10-23 line order exactly; v18 moved no incumbent pair.
+  The fuzzy_lab failure-mode prediction of Amendment 2 carries over unchanged.
+  (c) POWER AT n=7 (power_analysis.py, absolute real-spread scenarios 5/10/20
+  mm): exact chance threshold rho >= 0.679 (alpha=0.05). Three repeats per law
+  per course give power 0.89-1.00 (0.89 is the pessimistic 20 mm rect case);
+  a fourth rect repeat raises that case to 0.94. SESSION PLAN: 3 repeats per
+  law per course (42 runs), randomized order, with a fourth rect repeat for
+  all laws if pool time remains. This supersedes the 4-repeat/5-law plan of
+  Amendment 1.
