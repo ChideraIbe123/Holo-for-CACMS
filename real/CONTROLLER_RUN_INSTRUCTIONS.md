@@ -143,6 +143,8 @@ If forward or yaw goes the wrong way, or SPACE does not disarm, **stop here** an
    | `pursuit` | pure pursuit |
    | `los` | line-of-sight |
    | `ilos` | integral line-of-sight |
+   | `alos` | adaptive line-of-sight (Fossen 2015) |
+   | `smc` | sliding-mode heading (von Benzon 2022) |
    | `fuzzy_lab` | the lab's fuzzy path tracker |
 
    `<course>` is `rect` or `line`. `<rep>` is the repeat number: 1, 2, 3.
@@ -295,7 +297,7 @@ metre before it."`, `"Turn on the spot until you can see the pipe, then stop."`
 
 | File | Purpose |
 |---|---|
-| `tracker.py` | The five steering laws and the course logic. No ROS. |
+| `tracker.py` | The seven steering laws and the course logic. No ROS. |
 | `course_runner.py` | Runs one law: reads `/deadreckon/odom`, publishes `/cmd_vel`. |
 | `cmdvel_to_manual.py` | Turns `/cmd_vel` into stick commands. Owns arm, stop, jog. |
 | `run_one.sh` | One recorded run on the vehicle. |

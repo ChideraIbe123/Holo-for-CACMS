@@ -1,7 +1,7 @@
 #!/bin/bash
 # One recorded controller run on the real vehicle.
 #   ./run_one.sh <law> <course> <rep>         e.g.  ./run_one.sh los line 1
-# law: p | pursuit | los | ilos | fuzzy_lab      course: rect | line
+# law: p | smc | pursuit | los | ilos | alos | fuzzy_lab      course: rect | line
 # Resets the estimator, starts a bag, runs the controller until it finishes, stops the bag.
 # cmdvel_to_manual.py must already be running in another terminal, vehicle armed.
 # Optional environment: DEPTH (default -0.3), LINE_LENGTH (default 2.4), OUT (default ./runs)

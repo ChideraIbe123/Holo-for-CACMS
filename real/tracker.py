@@ -68,6 +68,32 @@ class LawP:
         return self.kp * err, err
 
 
+class LawSMC:
+    """Boundary-layer sliding-mode heading law (von Benzon et al. 2022, JMSE
+    10(12) 1898, sec 7.1): sliding surface s = err + lambda*d_err on the
+    bearing-to-waypoint error, reaching law c0*s + alpha*tanh(s/eps), gains
+    from their Table 6 yaw row. Port of the original benchmark sixth entrant
+    (sim/waypoint_controller.py --law smc), restoring the robust-control
+    family to the study. d_err is the per-update DIFFERENCE, not a rate, so
+    dt=0 duplicate poses contribute nothing; it is reset on each new leg so
+    the waypoint handoff does not inject a derivative kick."""
+    name = "smc"
+
+    def __init__(self, c0=2.0, lam=0.5, alpha=0.1, eps=0.1):
+        self.c0, self.lam, self.alpha, self.eps = c0, lam, alpha, eps
+        self.prev = None
+
+    def steer(self, o):
+        err = wrap(o.bearing - o.yaw)
+        if o.new_segment or self.prev is None:
+            self.prev = err
+        d_err = wrap(err - self.prev)
+        self.prev = err
+        sld = err + self.lam * d_err
+        r = self.c0 * sld + self.alpha * math.tanh(sld / self.eps)
+        return r, err
+
+
 class LawPursuit:
     """Registered 'pursuit': aim a point 0.4 of the leg ahead of the projection."""
     name = "pursuit"
@@ -116,6 +142,31 @@ class LawILOS:
         self.z = max(-self.zmax, min(self.zmax, self.z))
         q = o.e + self.sigma * self.z
         err = wrap(o.chi - math.atan(q / self.delta) - o.yaw)
+        return self.kpsi * err, err
+
+
+class LawALOS:
+    """Adaptive LOS (Fossen, Pettersen & Galeazzi, IEEE TCST 2015; 3-D form
+    Fossen & Aguiar, Automatica 2024). Integral action like ILOS, but via
+    direct estimation of the crab/sideslip angle:
+      psi_d = chi - beta_hat - atan(e/delta)
+      d(beta_hat)/dt = gamma * delta * e / sqrt(delta^2 + e^2)
+    beta_hat is clamped and reset on each new leg for the same reason ILOS
+    resets its integrator: legs point in different directions and the drifts
+    expected here (tether pull) are not earth-fixed."""
+    name = "alos"
+
+    def __init__(self, kpsi=1.4, delta=0.4, gamma=0.3, bmax=0.6):
+        self.kpsi, self.delta, self.gamma, self.bmax = kpsi, delta, gamma, bmax
+        self.beta = 0.0
+
+    def steer(self, o):
+        if o.new_segment:
+            self.beta = 0.0
+        self.beta += (min(o.dt, 0.3) * self.gamma * self.delta * o.e
+                      / math.sqrt(self.delta ** 2 + o.e ** 2))
+        self.beta = max(-self.bmax, min(self.bmax, self.beta))
+        err = wrap(o.chi - self.beta - math.atan(o.e / self.delta) - o.yaw)
         return self.kpsi * err, err
 
 
@@ -205,7 +256,8 @@ class LawFuzzyLab:
         return self.out_scale * r, theta_near
 
 
-LAWS = {c.name: c for c in (LawP, LawPursuit, LawLOS, LawILOS, LawFuzzyLab)}
+LAWS = {c.name: c for c in (LawP, LawSMC, LawPursuit, LawLOS, LawILOS, LawALOS,
+                            LawFuzzyLab)}
 
 
 # ------------------------------------------------------------------ tracker
