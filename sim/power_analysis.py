@@ -22,16 +22,27 @@ import itertools
 
 import numpy as np
 
-# Frozen 4-seed in-pool benchmark (drag-corrected model, 2026-09-20):
-# controller: (RMSE mean, seed std)
-BENCH = {
-    "aggressive":    (0.089, 0.019),
-    "pursuit":       (0.111, 0.006),
-    "smc_vonbenzon": (0.117, 0.012),
-    "p_baseline":    (0.119, 0.008),
-    "tight_pd":      (0.123, 0.011),
-    "sluggish":      (0.143, 0.003),
+# Frozen 4-seed in-pool predictions, v18 twin, seeded runs (2026-10-28).
+# Seven registered entrants: (RMSE mean, seed std) per course.
+BENCH_RECT = {
+    "pursuit":   (0.1431, 0.0012),
+    "los":       (0.1499, 0.0016),
+    "alos":      (0.1591, 0.0032),
+    "smc":       (0.1676, 0.0024),
+    "ilos":      (0.1707, 0.0009),
+    "p":         (0.1769, 0.0031),
+    "fuzzy_lab": (0.2180, 0.0019),
 }
+BENCH_LINE = {
+    "los":       (0.1343, 0.0017),
+    "alos":      (0.1430, 0.0027),
+    "fuzzy_lab": (0.1467, 0.0031),
+    "ilos":      (0.1510, 0.0010),
+    "pursuit":   (0.1780, 0.0024),
+    "smc":       (0.2170, 0.0037),
+    "p":         (0.2241, 0.0024),
+}
+BENCHES = {"rect": BENCH_RECT, "line": BENCH_LINE}
 ALPHA = 0.05
 MC = 20000
 RNG = np.random.default_rng(3)
@@ -65,9 +76,11 @@ def chance_threshold(n, alpha):
 
 
 def main():
-    names = list(BENCH)
-    mu = np.array([BENCH[n][0] for n in names])
-    sd_sim = np.array([BENCH[n][1] for n in names])
+  for course, bench in BENCHES.items():
+    print("=" * 20, "course:", course, "=" * 20)
+    names = list(bench)
+    mu = np.array([bench[n][0] for n in names])
+    sd_sim = np.array([bench[n][1] for n in names])
     n = len(names)
     thr = chance_threshold(n, ALPHA)
     print(f"n = {n} controllers; exact chance threshold: rho >= {thr:.3f} "
@@ -75,8 +88,12 @@ def main():
     print(f"sim side: 4 seeds (spread of the mean = sd/2)\n")
     print(f"{'real spread':>12} {'repeats':>8} {'POWER':>7} {'FPR':>6} "
           f"{'E[rho|agree]':>13} {'E[MMRV|agree] m':>16}")
-    for scale in (1.0, 1.5, 2.0):
-        sd_real = sd_sim * scale
+    # v18 seeded runs collapsed the sim seed std to 1-4 mm, so real spread
+    # scenarios are ABSOLUTE (m RMSE std per run), not multiples of sim:
+    # 5 mm = repeats as tight as the Oct-8 shakedown pairs, 20 mm = pessimistic
+    # (battery/tether/handling drift between runs).
+    for sd_abs in (0.005, 0.010, 0.020):
+        sd_real = np.full_like(sd_sim, sd_abs)
         for reps in (2, 3, 4, 5):
             det = fp = 0
             rho_sum = rv_sum = 0.0
@@ -89,15 +106,15 @@ def main():
                 det += r >= thr
                 real_rand = RNG.permutation(real_true)
                 fp += spearman(sim_obs, real_rand) >= thr
-            print(f"{scale:>11.1f}x {reps:>8} {det/MC:>7.2f} {fp/MC:>6.3f} "
+            print(f"{sd_abs:>10.3f}m {reps:>8} {det/MC:>7.2f} {fp/MC:>6.3f} "
                   f"{rho_sum/MC:>13.2f} {rv_sum/MC:>16.4f}")
         print()
-    print("Read: POWER is the probability the experiment DETECTS agreement "
-          "(rho above chance)\nwhen the sim ordering is truly correct; FPR "
-          "should sit near alpha. If POWER is low\nat feasible repeats, the "
-          "fix is separating controllers more (gain spacing), not\nmore "
-          "repeats alone — the aggressive-vs-rest gap carries most of the "
-          "signal.")
+  print("Read: POWER is the probability the experiment DETECTS agreement "
+        "(rho above chance)\nwhen the sim ordering is truly correct; FPR "
+        "should sit near alpha. If POWER is low\nat feasible repeats, the "
+        "fix is separating controllers more (gain spacing), not\nmore "
+        "repeats alone — the fuzzy/p-vs-rest gaps carry most of the "
+        "signal.")
 
 
 if __name__ == "__main__":
