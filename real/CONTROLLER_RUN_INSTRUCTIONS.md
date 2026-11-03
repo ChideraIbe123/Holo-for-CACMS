@@ -2,11 +2,12 @@
 
 For the person operating the BlueROV2 from the topside laptop. Follow the steps in order.
 
-**Status:** this code has passed simulator tests and a fake-autopilot test. It has never
-driven the real vehicle. The first session is a shakedown. Do the bench check in Step 4
-before any controller runs, and keep one hand near the SPACE key.
+**Status:** the five original controllers drove the real vehicle in the 2026-10-08
+shakedown session (one clean run each, no incidents). `alos` and `smc` are new since
+then and have only run in the simulator. Still do the bench check in Step 4 before any
+controller runs, and keep one hand near the SPACE key.
 
-**What it does:** runs five path-following controllers, one at a time. Each drives the
+**What it does:** runs seven path-following controllers, one at a time. Each drives the
 ROV along a short course and stops by itself.
 
 ---
@@ -14,24 +15,28 @@ ROV along a short course and stops by itself.
 ## Test description
 
 ```
-Controller test: (Duration ~ 45 minutes. Short version: Bags 3 and 14-28 only, ~ 20 minutes)
+Confirmatory controller session: 42 runs, ~ 2 hours in the water. If time runs short,
+finish both courses at 3 repeats before adding any extras.
 Sensors: camera, DVL, autopilot IMU + depth (MAVROS), dead reckoning. Sonar optional.
 ROV: MANUAL mode, battery above 15 V at start, tether floated with 2 m of slack.
 Pool: pump off for 10 minutes before the first bag. Same lighting as Bag 1.
 
-Bag 3: empty pool, bench check. ROV held at the wall. Arm, jog forward, yaw both ways,
+Bench check: empty pool, ROV held at the wall. Arm, jog forward, yaw both ways,
        disarm. (1 minute)
 
-Bags 4-13: empty pool, rectangle course. ROV starts 1.0 m from a short wall and 0.7 m
-       from the long wall on its RIGHT, nose pointing down the long axis of the pool.
-       The controller drives 2.0 m ahead, 0.6 m to the left, and back, for two laps
-       (~ 45 s). Five controllers x 2 runs.
+Rectangle runs (21 = 7 controllers x 3 repeats): empty pool. ROV starts 1.0 m from a
+       short wall and 0.7 m from the long wall on its RIGHT, nose pointing down the
+       long axis of the pool. The controller drives 2.0 m ahead, 0.6 m to the left,
+       and back, for two laps (~ 45 s per run).
 
-Bags 14-28: pipeline at an angle in the middle of the pool (same placement as Bag 2).
-       ROV starts level with one end of the pipe, 0.3 m to the RIGHT of it, nose
-       parallel to the pipe. The controller converges onto the pipe and follows it
-       for 2.4 m (~ 9 s). Five controllers x 3 passes.
+Line runs (21 = 7 controllers x 3 repeats): pipeline at an angle in the middle of the
+       pool (same placement as Bag 2). ROV starts level with one end of the pipe,
+       0.3 m to the RIGHT of it, nose parallel to the pipe. The controller converges
+       onto the pipe and follows it for 2.4 m (~ 9 s per run).
        Needs 2.4 m of straight pipe with at least 0.8 m of clear water past its far end.
+
+Optional, only if pool time remains after all 42: a 4th rectangle repeat for all
+       seven controllers (7 more runs).
 ```
 
 Put a strip of tape on the pool rim at each start position so every run starts from the
@@ -162,13 +167,28 @@ LINE_LENGTH=1.8 ./run_one.sh los line 1
 
 ### Run order
 
-Interleave the controllers so battery drain is spread evenly. Do the whole list once
-before starting the next repeat.
+The pre-registration requires a randomized order. Use these orders exactly (generated
+with a fixed seed before the session; each line is one full repeat, so battery drain
+spreads evenly). Do the whole line before starting the next repeat.
 
 ```
-Rectangle, empty pool:    p  pursuit  los  ilos  fuzzy_lab      (rep 1), then again (rep 2)
-Pipe line:                los  p  fuzzy_lab  pursuit  ilos      (rep 1), (rep 2), (rep 3)
+Rectangle, empty pool:
+  rep 1:  ilos  los  fuzzy_lab  alos  smc  pursuit  p
+  rep 2:  smc  pursuit  ilos  fuzzy_lab  los  alos  p
+  rep 3:  p  alos  ilos  smc  los  pursuit  fuzzy_lab
+
+Pipe line:
+  rep 1:  pursuit  alos  p  fuzzy_lab  los  smc  ilos
+  rep 2:  los  ilos  pursuit  fuzzy_lab  smc  p  alos
+  rep 3:  smc  los  fuzzy_lab  p  pursuit  ilos  alos
+
+Optional 4th rectangle repeat (only after all 42):
+  rep 4:  los  alos  smc  pursuit  ilos  fuzzy_lab  p
 ```
+
+A run that needed a pilot stop is voided for the analysis but keep its folder; redo it
+at the end of its repeat block with the same rep number plus the letter b
+(for example `./run_one.sh smc rect 2b`).
 
 ## Stopping
 
@@ -179,8 +199,8 @@ Pipe line:                los  p  fuzzy_lab  pursuit  ilos      (rep 1), (rep 2)
 | Converter prints `STOP LATCHED: geofence` | The estimate left the allowed box. Ctrl-C in Terminal C, reposition, press `c`, re-arm. |
 | ROV drifts toward a wall with no latch | The estimate has drifted. SPACE, reposition, and note it on the run sheet. |
 
-A run that needed a stop still counts as data. Keep its folder and note what happened.
-Then repeat it with the next rep number.
+A run that needed a stop is voided for the analysis (pre-registered rule). Keep its
+folder anyway and note what happened, then redo it as described under Run order.
 
 ## If depth misbehaves
 
