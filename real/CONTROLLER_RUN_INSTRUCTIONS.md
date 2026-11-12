@@ -1,357 +1,326 @@
-# Controller Run Instructions (topside laptop)
+# Controller Session Instructions
 
-For the person operating the BlueROV2 from the topside laptop. Follow the steps in order.
+A checklist for running the controller test on the BlueROV2 from the topside laptop.
+Do the steps in order. Every command can be copied and pasted.
 
-**Status:** the five original controllers drove the real vehicle in the 2026-10-08
-shakedown session (one clean run each, no incidents). `alos` and `smc` are new since
-then and have only run in the simulator. Still do the bench check in Step 4 before any
-controller runs, and keep one hand near the SPACE key.
+**What happens:** the ROV drives a short course by itself, then stops. You do this
+42 times: 7 controllers, 2 courses, 3 times each. It takes about 2 hours in the water.
 
-**What it does:** runs seven path-following controllers, one at a time. Each drives the
-ROV along a short course and stops by itself.
-
----
-
-## Test description
-
-```
-Confirmatory controller session: 42 runs, ~ 2 hours in the water. If time runs short,
-finish both courses at 3 repeats before adding any extras.
-Sensors: camera, DVL, autopilot IMU + depth (MAVROS), dead reckoning. Sonar optional.
-ROV: MANUAL mode, battery above 15 V at start, tether floated with 2 m of slack.
-Pool: pump off for 10 minutes before the first bag. Same lighting as Bag 1.
-
-Bench check: empty pool, ROV held at the wall. Arm, jog forward, yaw both ways,
-       disarm. (1 minute)
-
-Depth zero check: ROV floating at the surface, read the autopilot depth, set the
-       session depth target to 0.5 m below it. (2 minutes; repeat after a battery swap)
-
-Rectangle runs (21 = 7 controllers x 3 repeats): empty pool. ROV starts 1.0 m from a
-       short wall and 0.7 m from the long wall on its RIGHT, nose pointing down the
-       long axis of the pool. The controller drives 2.0 m ahead, 0.6 m to the left,
-       and back, for two laps (~ 45 s per run).
-
-Line runs (21 = 7 controllers x 3 repeats): pipeline at an angle in the middle of the
-       pool (same placement as Bag 2). ROV starts level with one end of the pipe,
-       0.3 m to the RIGHT of it, nose parallel to the pipe. The controller converges
-       onto the pipe and follows it for 2.4 m (~ 9 s per run).
-       Needs 2.4 m of straight pipe with at least 0.8 m of clear water past its far end.
-
-Optional, only if pool time remains after all 42: a 4th rectangle repeat for all
-       seven controllers (7 more runs).
-```
-
-Put a strip of tape on the pool rim at each start position so every run starts from the
-same place.
+**Safety:** keep one hand near the **SPACE** key in Terminal B. SPACE stops the
+thrusters immediately.
 
 ---
 
-## Step 1. Get the code (once)
+## Before you start
 
-The code must sit in a folder your ROS 2 terminal can see.
+- [ ] Battery above 15 V
+- [ ] Tether floating, with 2 m of slack
+- [ ] Pool pump OFF for 10 minutes before the first run
+- [ ] Tape marks on the pool rim at both start positions (see "The two courses" below)
+- [ ] A printed run sheet (template at the bottom of this page)
 
-- **Docker workflow** (the `ros2` branch of BlueROV-Tools): only the BlueROV-Tools folder is
-  shared with the container, so clone inside it. On the host:
-  ```bash
-  cd <path to>/BlueROV-Tools
-  git clone -b pilot-controllers https://github.com/ChideraIbe123/Holo-for-CACMS.git pilot_kit
-  ```
-  Git will list `pilot_kit/` as untracked in BlueROV-Tools. Do not commit it there.
-  Inside the container it appears at `/workspaces/ros2_ws/src/BlueROV-Tools/pilot_kit`.
-- **Native ROS 2:** clone anywhere, for example `~/pilot_kit`, with the same command.
+---
 
-Everything you run is in `pilot_kit/real/`.
+## Step 1. Get the code (first time only)
 
-## Step 2. Start the vehicle stack
+If you use Docker (the usual lab setup), on the laptop, not inside the container:
+```bash
+cd <path to>/BlueROV-Tools
+git clone -b pilot-controllers https://github.com/ChideraIbe123/Holo-for-CACMS.git pilot_kit
+```
+Already have it? Update it instead:
+```bash
+cd <path to>/BlueROV-Tools/pilot_kit && git pull
+```
+Git will say `pilot_kit/` is untracked in BlueROV-Tools. That is fine. Do not commit it.
 
-1. Power the ROV and wait for BlueOS.
-2. Open the Mission Control GUI the usual way:
+---
+
+## Step 2. Start the vehicle
+
+1. Power on the ROV. Wait for BlueOS to come up.
+2. Open the lab GUI:
    ```bash
    ros2 run bluerov_gui bluerov_gui
    ```
-3. **Launch** tab: click **Launch All**. Wait until MAVROS, DVL Driver, Camera show as alive.
-4. In the Launch tab, **stop "Dead Reckoning"** (and "EKF Odometry" if it started).
-   We start dead reckoning by hand in Step 3 so its mode is known.
-5. **Do NOT click "Connect" in the Teleop panel**, and do not run `keyboard_teleop`.
-   Both send stick commands continuously on the same link this code uses. If the GUI
-   teleop is already connected, disconnect it now.
-6. Confirm the vehicle is in **MANUAL** mode.
+3. Go to the **Launch** tab and click **Launch All**. Wait until MAVROS, DVL Driver and
+   Camera show as alive.
+4. In the same tab, **stop "Dead Reckoning"** (and "EKF Odometry" if it is running).
+   You will start it yourself in Step 3.
+5. **Do NOT click "Connect" in the Teleop panel.** If it is already connected,
+   disconnect it. It fights with our code for control of the ROV.
+6. Check the ROV is in **MANUAL** mode.
 
-## Step 3. Open three ROS 2 terminals
+---
 
-Open each the way you normally open a ROS 2 terminal (Docker: `docker/scripts/ros2-shell.sh`
-then `source /workspaces/ros2_ws/install/setup.bash`. Native: `source ~/ros2_ws/install/setup.bash`).
-In each one:
+## Step 3. Open three terminals
+
+Open three ROS 2 terminals the way you normally do. With Docker, run this in each:
 ```bash
-cd <pilot_kit>/real
-python3 -c "import rclpy, pymavlink; print('ok')"      # must print ok
+docker/scripts/ros2-shell.sh
+source /workspaces/ros2_ws/install/setup.bash
+cd /workspaces/ros2_ws/src/BlueROV-Tools/pilot_kit/real
 ```
 
-**Terminal A, dead reckoning:**
+**Terminal A: position tracking.** Paste this and leave it running:
 ```bash
 ros2 run bluerov_dr dead_reckon --ros-args -p estimator_mode:=legacy_integrator
 ```
-Check it from another terminal:
-```bash
-ros2 param get /dvl_dead_reckon estimator_mode     # legacy_integrator
-ros2 topic hz /deadreckon/odom                     # about 35 Hz
-```
 
-**Terminal B, the stick converter.** Leave this terminal in focus during runs. It holds
-the emergency stop.
+**Terminal B: control and emergency stop.** For the **rectangle** runs:
 ```bash
 python3 cmdvel_to_manual.py --depth-mode passthrough
 ```
-For the pipe (line) course, start it with a longer fence instead:
-```bash
-python3 cmdvel_to_manual.py --depth-mode passthrough --fence=-0.4,2.9,-0.4,0.8
-```
 It should print `MAVLink connected` and then `vehicle: disarmed, mode MANUAL`.
-If it prints `no heartbeat from the vehicle`, something else is holding port 14550
-(GUI teleop, keyboard teleop, QGroundControl). Close that and retry.
+If it says `no heartbeat from the vehicle`, the GUI teleop (or QGroundControl) is still
+connected. Close it and try again.
 
-Keys in Terminal B:
+Terminal B keys:
 
-| Key | Action |
+| Key | What it does |
 |---|---|
-| `a` | arm |
-| **SPACE** or `d` | **disarm and latch a stop** |
-| `c` | clear a latched stop |
-| `i` `k` | jog forward, back (low power, between runs only) |
-| `j` `l` | jog yaw left (counter-clockwise), right (clockwise) |
+| `a` | arm (thrusters on) |
+| **SPACE** | **STOP: thrusters off** |
+| `c` | clear a stop, so you can arm again |
+| `i` / `k` | nudge forward / back |
+| `j` / `l` | turn left / right |
 
-**Terminal C** is for starting runs (Step 5).
+**Terminal C: starting runs.** You type the run commands here.
 
-## Step 4. Bench check (Bag 3). Do not skip.
+---
 
-ROV in the water, held at the wall or on a short tether.
+## Step 4. Thruster check (do not skip)
 
-1. Terminal B: press `a`. Expect `vehicle: ARMED`.
-2. Tap `i` a few times. The ROV must push **forward**.
-3. Tap `l`. Seen from above, the nose must swing **clockwise**. Tap `j`: counter-clockwise.
-4. Press SPACE. Expect `DISARM sent` and the thrusters stop.
-5. Press `c` to clear the stop.
+Hold the ROV at the wall.
 
-If forward or yaw goes the wrong way, or SPACE does not disarm, **stop here** and report it.
+1. Terminal B: press `a`. It should say `vehicle: ARMED`.
+2. Tap `i` a few times. The ROV should push **forward**.
+3. Tap `l`. The nose should turn **right** (clockwise from above). Tap `j`: it turns **left**.
+4. Press **SPACE**. The thrusters should stop.
+5. Press `c`.
 
-## Step 4b. Depth zero check. Do not skip.
+If anything goes the wrong way, or SPACE does not stop it, **stop and report it.**
+Do not continue.
 
-The controller holds depth using the autopilot's depth reading, and that reading's zero
-is set when the autopilot boots, not at the water surface (in the tub it read -0.093 m
-while floating). The simulator predictions were made at **0.5 m below the surface**,
-so the real runs must be too.
+---
 
-1. ROV disarmed, floating freely at the surface, not touching the wall.
+## Step 5. Depth check (do not skip)
+
+The ROV must drive **0.5 m below the surface**, the same depth the simulator used. Its
+depth sensor does not read exactly 0 at the surface, so you measure that first.
+
+1. Let the ROV float at the surface, disarmed, away from the wall.
 2. In Terminal C:
    ```bash
    ros2 topic echo /mavros/global_position/rel_alt --once
    ```
-3. Write the number on the run sheet as **surface reading**.
-4. Set the depth target for the session = surface reading minus 0.5. For example, a
-   surface reading of -0.09 gives -0.59:
-   ```bash
-   export DEPTH=-0.59
-   ```
-   Every `./run_one.sh` in this terminal now uses it. If you open a new Terminal C,
-   export it again.
+3. Write the number on the run sheet as the **surface reading**.
+4. Subtract 0.5 from it, and set that as the depth for the session:
 
-Redo this check after any battery swap, autopilot reboot or power cycle, and write the
-new reading and new DEPTH on the run sheet.
-
-## Step 5. One run
-
-1. Place the ROV on its start mark, nose pointing along the course (see Test description).
-   The course is laid out from wherever the ROV is and whichever way it faces at the
-   moment the run starts, so placement matters.
-2. Terminal B: `c` if a stop is latched, then `a` to arm.
-3. Terminal C:
-   ```bash
-   ./run_one.sh <law> <course> <rep>
-   ```
-   | `<law>` | Controller |
+   | Surface reading | Type this in Terminal C |
    |---|---|
-   | `p` | proportional heading |
-   | `pursuit` | pure pursuit |
-   | `los` | line-of-sight |
-   | `ilos` | integral line-of-sight |
-   | `alos` | adaptive line-of-sight (Fossen 2015) |
-   | `smc` | sliding-mode heading (von Benzon 2022) |
-   | `fuzzy_lab` | the lab's fuzzy path tracker |
+   | 0.00 | `export DEPTH=-0.50` |
+   | -0.05 | `export DEPTH=-0.55` |
+   | -0.10 | `export DEPTH=-0.60` |
+   | -0.15 | `export DEPTH=-0.65` |
 
-   `<course>` is `rect` or `line`. `<rep>` is the repeat number: 1, 2, 3.
-   Example: `./run_one.sh los line 1`
+   For other readings: reading minus 0.5.
 
-   The script resets dead reckoning, starts a bag, runs the controller, and stops the bag.
-   It prints the depth target at the start; check it matches the DEPTH from Step 4b.
-4. The ROV stops by itself. Terminal B prints `run ended: holding neutral`.
-5. Write on the run sheet: run name, battery voltage, DEPTH used, and anything unusual.
-6. Bring the ROV back to the start mark with `i k j l` or by hand. Repeat from 1.
+**Do this check again after every battery swap or reboot.** If you close Terminal C,
+type the `export DEPTH=...` line again in the new one.
 
-If the pipe is shorter than 2.4 m, set the length to follow, leaving 0.3 m spare:
+---
+
+## Step 6. Do one run
+
+1. Put the ROV on the start mark, facing the right way (see "The two courses").
+   The ROV lays out the course from wherever it starts, so the start position matters.
+2. Terminal B: press `c`, then `a` (arm).
+3. Terminal C: type the run command, for example:
+   ```bash
+   ./run_one.sh ilos rect 1
+   ```
+   That means controller `ilos`, course `rect`, repeat `1`.
+   The first line it prints shows the depth. Check it matches your `DEPTH`.
+4. Wait. The ROV drives the course and stops by itself. Terminal B says
+   `run ended: holding neutral`.
+5. Fill in the run sheet: run name, battery voltage, anything odd.
+6. Bring the ROV back to the start mark (keys `i` `k` `j` `l`, or by hand).
+
+Then do the next run on the list.
+
+---
+
+## The two courses
+
+**Rectangle (`rect`).** Empty pool. Start 1.0 m from a short wall and 0.7 m from the
+long wall on the ROV's **right**, nose pointing down the long side. The ROV drives a
+2.0 m by 0.6 m rectangle twice (about 45 seconds).
+
+**Line (`line`).** Pipe in the middle of the pool. Start level with one end of the pipe,
+0.3 m to its **right**, nose parallel to the pipe. The ROV moves onto the pipe and
+follows it for 2.4 m (about 9 seconds). You need 2.4 m of straight pipe plus 0.8 m of
+clear water past the far end. If the pipe is shorter, put `LINE_LENGTH=` in front of
+the command, with the pipe length minus 0.3 (for example a 2.1 m pipe):
 ```bash
 LINE_LENGTH=1.8 ./run_one.sh los line 1
 ```
 
-### Run order
-
-The pre-registration requires a randomized order. Use these orders exactly (generated
-with a fixed seed before the session; each line is one full repeat, so battery drain
-spreads evenly). Do the whole line before starting the next repeat.
-
-```
-Rectangle, empty pool:
-  rep 1:  ilos  los  fuzzy_lab  alos  smc  pursuit  p
-  rep 2:  smc  pursuit  ilos  fuzzy_lab  los  alos  p
-  rep 3:  p  alos  ilos  smc  los  pursuit  fuzzy_lab
-
-Pipe line:
-  rep 1:  pursuit  alos  p  fuzzy_lab  los  smc  ilos
-  rep 2:  los  ilos  pursuit  fuzzy_lab  smc  p  alos
-  rep 3:  smc  los  fuzzy_lab  p  pursuit  ilos  alos
-
-Optional 4th rectangle repeat (only after all 42):
-  rep 4:  los  alos  smc  pursuit  ilos  fuzzy_lab  p
+**Before the line runs, restart Terminal B** with a bigger safety box. Press Ctrl-C in
+Terminal B, then:
+```bash
+python3 cmdvel_to_manual.py --depth-mode passthrough --fence=-0.4,2.9,-0.4,0.8
 ```
 
-A run that needed a pilot stop is voided for the analysis but keep its folder; redo it
-at the end of its repeat block with the same rep number plus the letter b
-(for example `./run_one.sh smc rect 2b`).
+---
 
-## Stopping
+## Run list (do them in exactly this order)
 
-| Situation | Do this |
+The order is shuffled on purpose. Do not change it. Copy each command into Terminal C.
+Tick each one off on the run sheet as you go.
+
+**Rectangle: 21 runs**
+```bash
+./run_one.sh ilos rect 1
+./run_one.sh los rect 1
+./run_one.sh fuzzy_lab rect 1
+./run_one.sh alos rect 1
+./run_one.sh smc rect 1
+./run_one.sh pursuit rect 1
+./run_one.sh p rect 1
+
+./run_one.sh smc rect 2
+./run_one.sh pursuit rect 2
+./run_one.sh ilos rect 2
+./run_one.sh fuzzy_lab rect 2
+./run_one.sh los rect 2
+./run_one.sh alos rect 2
+./run_one.sh p rect 2
+
+./run_one.sh p rect 3
+./run_one.sh alos rect 3
+./run_one.sh ilos rect 3
+./run_one.sh smc rect 3
+./run_one.sh los rect 3
+./run_one.sh pursuit rect 3
+./run_one.sh fuzzy_lab rect 3
+```
+
+**Now restart Terminal B for the line course** (see "The two courses").
+
+**Line: 21 runs**
+```bash
+./run_one.sh pursuit line 1
+./run_one.sh alos line 1
+./run_one.sh p line 1
+./run_one.sh fuzzy_lab line 1
+./run_one.sh los line 1
+./run_one.sh smc line 1
+./run_one.sh ilos line 1
+
+./run_one.sh los line 2
+./run_one.sh ilos line 2
+./run_one.sh pursuit line 2
+./run_one.sh fuzzy_lab line 2
+./run_one.sh smc line 2
+./run_one.sh p line 2
+./run_one.sh alos line 2
+
+./run_one.sh smc line 3
+./run_one.sh los line 3
+./run_one.sh fuzzy_lab line 3
+./run_one.sh p line 3
+./run_one.sh pursuit line 3
+./run_one.sh ilos line 3
+./run_one.sh alos line 3
+```
+
+**Extra, only if there is time left after all 42** (rectangle again, so restart
+Terminal B with the rectangle command first):
+```bash
+./run_one.sh los rect 4
+./run_one.sh alos rect 4
+./run_one.sh smc rect 4
+./run_one.sh pursuit rect 4
+./run_one.sh ilos rect 4
+./run_one.sh fuzzy_lab rect 4
+./run_one.sh p rect 4
+```
+If time is short, finish all 42 before doing any extras.
+
+---
+
+## If something goes wrong
+
+| What happened | What to do |
 |---|---|
-| Anything looks wrong | **SPACE** in Terminal B. Disarms and latches. |
-| Terminal B frozen or lost | Ctrl-C in Terminal B, or pull the ROV in by the tether. |
-| Converter prints `STOP LATCHED: geofence` | The estimate left the allowed box. Ctrl-C in Terminal C, reposition, press `c`, re-arm. |
-| ROV drifts toward a wall with no latch | The estimate has drifted. SPACE, reposition, and note it on the run sheet. |
+| Anything looks wrong | Press **SPACE** in Terminal B. |
+| Terminal B is frozen | Ctrl-C in Terminal B, or pull the ROV in by the tether. |
+| Terminal B says `STOP LATCHED: geofence` | The ROV left its safety box. Ctrl-C in Terminal C, move the ROV back, press `c`, arm again. |
+| ROV heads for a wall and nothing stops it | Press **SPACE**. Note it on the run sheet. |
+| ROV keeps sinking, popping up, or bobbing | Ctrl-C in Terminal B, restart it with `--depth-mode neutral` instead of `--depth-mode passthrough`. The ROV now stays at the surface. Write **surface mode** on the run sheet for every run after this. |
 
-A run that needed a stop is voided for the analysis (pre-registered rule). Keep its
-folder anyway and note what happened, then redo it as described under Run order.
+**If you had to stop a run:** that run does not count, but keep its folder. Redo it at
+the end of the same block of 7, adding `b` to the repeat number:
+```bash
+./run_one.sh smc rect 2b
+```
 
-## If depth misbehaves
+`run_one.sh` refuses to overwrite a run that already exists. If it says
+`already exists`, you typed a run you already did. Check the run sheet.
 
-The controller holds the DEPTH set in Step 4b through the throttle stick. If DEPTH was
-never exported, it falls back to -0.5 (0.5 m below the autopilot's zero, not the true
-surface). If the ROV sinks, surfaces repeatedly, or porpoises:
-
-1. Ctrl-C Terminal B and restart it with `--depth-mode neutral`.
-2. The ROV now rides at the surface, where it is slightly buoyant. Carry on.
-3. Write **surface mode** on the run sheet for every run from then on. These runs no
-   longer match the simulator's 0.5 m depth, so they are analysed separately.
+---
 
 ## After the session
 
-Each run leaves a folder `real/runs/<law>_<course>_r<rep>/` containing `bag/`, `runner.csv`
-and `bag.log`.
-
+Check the runs:
 ```bash
 python3 score_runs.py runs/
 ```
-prints time, path length and tracking error per run.
+Then upload the whole `runs/` folder and a photo of the run sheet to Box:
+`2026-MM-DD Swimming tub test/controller_runs/`
 
-Upload the whole `runs/` folder and a photo of the run sheet to Box under
-`2026-MM-DD Swimming tub test/controller_runs/`.
+---
 
-## Optional: the LLM pilot (camera in, actions out)
+## Run sheet template
 
-`llm_pilot.py` lets a vision-language model drive from the camera. It works in steps:
-take a frame, ask the model for one small action, carry it out for up to 2 seconds, stop,
-take the next frame. The ROV stands still while the model thinks. Its commands go through
-the same converter, so the stick limits, geofence and SPACE stop all still apply.
-
-It needs internet on the topside laptop and a model API key. Each step uploads one 768 px
-JPEG of the camera view to the model provider. Two providers work:
-
-| Provider | Default model | Key variable | Install |
-|---|---|---|---|
-| OpenAI | `gpt-6-astra` | `OPENAI_API_KEY` or `OPENAI_KEY` | `python3 -m pip install openai` |
-| Anthropic | `claude-opus-5-5` | `ANTHROPIC_API_KEY` | `python3 -m pip install anthropic` |
-
-**Setup, once, in a ROS 2 terminal:**
-```bash
-python3 -m pip install openai                 # or anthropic
-echo 'OPENAI_KEY=...' > ../.env               # ask the project lead for the key
-chmod 600 ../.env                             # .env is git-ignored. Never commit a key.
-python3 llm_pilot.py --check                  # one test call, no motion. Must print CHECK OK
 ```
-The pilot picks the provider from whichever key it finds; force one with `--provider`.
-`--check` also prints how long one reply takes. Measured with `gpt-6-astra`: 5 to 8 seconds
-and about 1,250 input tokens per step.
+Date: ____________   Operator: ____________
 
-**What to expect (2026-10-06).** In the simulator, with the goal worded as below, the
-model followed a 1.8 m pipe in 8 steps and 52 seconds, stayed within 0.09 m of it, and
-stopped within 0.1 m of the intended point. Shown 11 real frames from the March pipe
-recording, it chose to advance along the pipe in 8, and correctly chose to turn and look in
-the frames where no pipe was visible. It has not driven the real vehicle.
+Surface reading: ______   DEPTH used: ______
+(Redo after battery swap: surface reading ______   DEPTH ______)
 
-**Word the goal with something visible, not a distance.** The model judges distance badly.
-Told "stop half a metre before the end" it stopped 2.3 m short. Told "stop when the far end
-of the pipe reaches the bottom edge of the frame" it stopped in the right place.
-
-Recommended goal for the pipe:
-```
-Follow the dark pipe lying on the pool floor to its far end, staying over it or right
-beside it. Stop when the far end of the pipe reaches the bottom edge of the frame or passes
-out of view below it.
+Run name         | Battery V | Done? | Notes
+-----------------+-----------+-------+------------------------------
+ilos rect 1      |           |       |
+los rect 1       |           |       |
+fuzzy_lab rect 1 |           |       |
+...              |           |       |
 ```
 
-**Three stages. Do them in order, and stop at the first one that looks wrong.**
+---
 
-*Stage 1, offline, no ROV.* Show the model recorded frames and read what it would do:
-```bash
-python3 llm_pilot.py --frames <folder of .png or .jpg> --goal "<goal>" --out llm_runs/offline1
-```
-Each frame is judged on its own. Use this the moment the first camera frames of the day exist.
+## Notes for whoever maintains this
 
-*Stage 2, live dry run, ROV in the water but not moving.* Step 2 below.
+- The ROV holds depth with the autopilot's `rel_alt` reading, whose zero is set at boot,
+  not at the surface (in the tub it read -0.093 m while floating). The simulator
+  predictions were made at 0.5 m, so `DEPTH` = surface reading minus 0.5.
+  `run_one.sh` defaults to -0.5 if `DEPTH` is not set.
+- The run order was generated with a fixed seed (Python `random.Random(20261103)`), as
+  the pre-registration requires a randomized order.
+- Position drifts a few percent of distance travelled. The safety box uses the estimated
+  position, so it cannot see that drift.
+- Stick gains were measured at 15.4 V in MANUAL mode. On a low battery the ROV is slower.
+  MANUAL only: other modes change how the sticks behave.
+- The `alos` and `smc` controllers have only run in the simulator. The other five ran on
+  the real ROV in the 2026-10-08 session.
+- Optional LLM camera pilot: see `LLM_PILOT.md`.
 
-*Stage 3, live.* Step 3 below.
-
-**Run it:**
-1. Terminal B, converter with a longer run limit and a fence sized for free movement
-   (the box is measured from where the ROV starts, in metres: back, ahead, right, left):
-   ```bash
-   python3 cmdvel_to_manual.py --depth-mode passthrough --max-run 300 --fence=-0.6,3.0,-0.8,0.8
-   ```
-2. Dry run first. The model decides and logs, but the ROV does not move:
-   ```bash
-   python3 llm_pilot.py --dry-run --goal "<goal>" --out llm_runs/dry1
-   ```
-   Read the printed decisions. Move the ROV by hand to a few spots (beside the pipe, facing a
-   wall, pipe out of view) and check the decision is sensible at each. If so, continue.
-3. Arm (`a` in Terminal B), then run it live, with a bag recording in another terminal:
-   ```bash
-   python3 llm_pilot.py --depth-target -0.3 --goal "<goal>" --out llm_runs/pipe1
-   ```
-4. It stops when the model says it is done, after 40 steps, or after 4 minutes.
-   **SPACE in Terminal B stops it at any time.**
-
-Each run folder holds every frame the model saw (`frame_0001.jpg`, ...) and `steps.jsonl`
-with each decision, its stated reason, the reply time and the token count.
-
-The goal is plain English. Other examples: `"Drive toward the far wall and stop about one
-metre before it."`, `"Turn on the spot until you can see the pipe, then stop."`
-
-## Known limits
-
-- **Estimator drift.** Dead reckoning drifts a few percent of distance travelled. In a
-  pool 2 m wide that can reach tens of centimetres within a minute. The geofence uses
-  the estimate, so it cannot see that drift.
-- **Stick gains are open-loop.** They were measured at 15.4 V in MANUAL mode. On a low
-  battery the ROV runs slower than commanded.
-- **MANUAL mode only.** In ALT_HOLD or STABILIZE the autopilot reinterprets the yaw stick
-  and the gains are wrong.
-
-## What is in this folder
-
-| File | Purpose |
+| File | What it is |
 |---|---|
-| `tracker.py` | The seven steering laws and the course logic. No ROS. |
-| `course_runner.py` | Runs one law: reads `/deadreckon/odom`, publishes `/cmd_vel`. |
-| `cmdvel_to_manual.py` | Turns `/cmd_vel` into stick commands. Owns arm, stop, jog. |
-| `run_one.sh` | One recorded run on the vehicle. |
-| `llm_pilot.py` | A vision-language model drives from the camera, one small step at a time. |
-| `score_runs.py` | Scores finished runs. |
-| `sim_run.sh`, `test_tracker.py`, `test_mavlink_fake.py`, `test_llm_fake.py` | Simulator and offline tests. |
+| `tracker.py` | The seven controllers and the course shapes |
+| `course_runner.py` | Runs one controller |
+| `cmdvel_to_manual.py` | Turns controller output into stick commands; arm, stop, nudge |
+| `run_one.sh` | One recorded run |
+| `score_runs.py` | Scores finished runs |
+| `llm_pilot.py` | Optional camera pilot (see `LLM_PILOT.md`) |
