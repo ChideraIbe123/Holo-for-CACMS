@@ -24,6 +24,9 @@ Pool: pump off for 10 minutes before the first bag. Same lighting as Bag 1.
 Bench check: empty pool, ROV held at the wall. Arm, jog forward, yaw both ways,
        disarm. (1 minute)
 
+Depth zero check: ROV floating at the surface, read the autopilot depth, set the
+       session depth target to 0.5 m below it. (2 minutes; repeat after a battery swap)
+
 Rectangle runs (21 = 7 controllers x 3 repeats): empty pool. ROV starts 1.0 m from a
        short wall and 0.7 m from the long wall on its RIGHT, nose pointing down the
        long axis of the pool. The controller drives 2.0 m ahead, 0.6 m to the left,
@@ -132,6 +135,30 @@ ROV in the water, held at the wall or on a short tether.
 
 If forward or yaw goes the wrong way, or SPACE does not disarm, **stop here** and report it.
 
+## Step 4b. Depth zero check. Do not skip.
+
+The controller holds depth using the autopilot's depth reading, and that reading's zero
+is set when the autopilot boots, not at the water surface (in the tub it read -0.093 m
+while floating). The simulator predictions were made at **0.5 m below the surface**,
+so the real runs must be too.
+
+1. ROV disarmed, floating freely at the surface, not touching the wall.
+2. In Terminal C:
+   ```bash
+   ros2 topic echo /mavros/global_position/rel_alt --once
+   ```
+3. Write the number on the run sheet as **surface reading**.
+4. Set the depth target for the session = surface reading minus 0.5. For example, a
+   surface reading of -0.09 gives -0.59:
+   ```bash
+   export DEPTH=-0.59
+   ```
+   Every `./run_one.sh` in this terminal now uses it. If you open a new Terminal C,
+   export it again.
+
+Redo this check after any battery swap, autopilot reboot or power cycle, and write the
+new reading and new DEPTH on the run sheet.
+
 ## Step 5. One run
 
 1. Place the ROV on its start mark, nose pointing along the course (see Test description).
@@ -156,8 +183,9 @@ If forward or yaw goes the wrong way, or SPACE does not disarm, **stop here** an
    Example: `./run_one.sh los line 1`
 
    The script resets dead reckoning, starts a bag, runs the controller, and stops the bag.
+   It prints the depth target at the start; check it matches the DEPTH from Step 4b.
 4. The ROV stops by itself. Terminal B prints `run ended: holding neutral`.
-5. Write on the run sheet: run name, battery voltage, and anything unusual.
+5. Write on the run sheet: run name, battery voltage, DEPTH used, and anything unusual.
 6. Bring the ROV back to the start mark with `i k j l` or by hand. Repeat from 1.
 
 If the pipe is shorter than 2.4 m, set the length to follow, leaving 0.3 m spare:
@@ -204,11 +232,14 @@ folder anyway and note what happened, then redo it as described under Run order.
 
 ## If depth misbehaves
 
-By default the controller holds 0.3 m depth through the throttle stick (set `DEPTH=-0.4 ./run_one.sh ...` to change it). If the ROV sinks,
-surfaces repeatedly, or porpoises:
+The controller holds the DEPTH set in Step 4b through the throttle stick. If DEPTH was
+never exported, it falls back to -0.5 (0.5 m below the autopilot's zero, not the true
+surface). If the ROV sinks, surfaces repeatedly, or porpoises:
 
 1. Ctrl-C Terminal B and restart it with `--depth-mode neutral`.
 2. The ROV now rides at the surface, where it is slightly buoyant. Carry on.
+3. Write **surface mode** on the run sheet for every run from then on. These runs no
+   longer match the simulator's 0.5 m depth, so they are analysed separately.
 
 ## After the session
 

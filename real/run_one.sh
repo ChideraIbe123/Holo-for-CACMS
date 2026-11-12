@@ -4,7 +4,9 @@
 # law: p | smc | pursuit | los | ilos | alos | fuzzy_lab      course: rect | line
 # Resets the estimator, starts a bag, runs the controller until it finishes, stops the bag.
 # cmdvel_to_manual.py must already be running in another terminal, vehicle armed.
-# Optional environment: DEPTH (default -0.3), LINE_LENGTH (default 2.4), OUT (default ./runs)
+# Optional environment: DEPTH (default -0.5), LINE_LENGTH (default 2.4), OUT (default ./runs)
+# DEPTH is in the autopilot's rel_alt frame, whose zero is not the water surface: set it
+# to (floating surface reading - 0.5) to match the simulator's 0.5 m (instructions Step 4b).
 set -e
 LAW=${1:?law}; COURSE=${2:?course}; REP=${3:?rep}
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -20,9 +22,11 @@ sleep 1
 ros2 bag record -o "$OUT/bag" $TOPICS > "$OUT/bag.log" 2>&1 &
 BAG=$!
 sleep 3
-echo "=== $TAG: controller starting ==="
+DEPTH=${DEPTH:--0.5}
+echo "$DEPTH" > "$OUT/depth_target.txt"
+echo "=== $TAG: controller starting, depth target $DEPTH ==="
 python3 "$HERE/course_runner.py" --law "$LAW" --course "$COURSE" --name "$TAG" \
-    --depth-target "${DEPTH:--0.3}" --line-length "${LINE_LENGTH:-2.4}" --log "$OUT/runner.csv" || true
+    --depth-target "$DEPTH" --line-length "${LINE_LENGTH:-2.4}" --log "$OUT/runner.csv" || true
 sleep 1
 # SIGINT is ignored by background jobs from non-interactive shells (session
 # 2026-10-08 finding: orphaned recorders wrote ~700 GB); SIGTERM works.
