@@ -175,3 +175,78 @@ intervention voided and rerun; both rosbags and live `sim_dr.csv` recorded.
   versus 0.50 m in the simulator; recorded, not corrected. Runs that time out
   the dive gate are reported separately. Code: `real/course_runner.py`
   (`DepthGate`), offline test `real/test_depth_gate.py`.
+- **2026-11-13 — Amendment 6: vehicle model re-fitted from measurements (DVL payload,
+  float trim), real start-up reproduced in the twin, predictions re-frozen (added
+  BEFORE the confirmatory session; no confirmatory controller data exists).**
+  DISCLOSURE: on 2026-11-12 the lab ran the vehicle in the pool to develop and tune
+  the start-up procedure in (b) (runs aborted or used for tuning; a first rectangle
+  run struck the far wall under the old surface-start protocol). None of those runs
+  were scored or compared with the simulator; the changes below were driven by the
+  October float recordings, the DVL datasheet and the lab's transform file.
+  (a) VEHICLE MODEL v19 (`sim/bluerov2_standard_model.py`, commits `acf6646`,
+  `18c0e05`). The Water Linked DVL A50 (170 g in air, 105 g in water) is added as a
+  point mass at the lab's measured mount (17 cm aft, 9 cm left, 11 cm below centre):
+  mass 11.67 kg, inertia +2.2/4.5/3.9 %. The centre of gravity is set so the model
+  floats at the MEASURED attitude of the lab's vehicle, pitch +12.72 deg nose-down,
+  roll +0.49 deg (tub float recordings, sd 0.02 deg; confirmed by the resting
+  accelerometer, accel_x = -2.01 m/s^2 = -g sin 11.8 deg); the bare Wu body floated
+  level. Net buoyancy (0.2 kg) remains an assumption. The simulated DVL altitude is
+  now measured from the DVL face rather than the depth sensor.
+  (b) PROTOCOL. Each real run now starts with `course_runner.py --init` (rov-pilot-kit
+  branch confirmatory-session, pushed 2026-11-12): the vehicle floats on the start
+  mark, the estimator is zeroed there, the vehicle sinks to the depth target and turns
+  to a saved heading (the course axis), and the course starts only after depth
+  (0.05 m) and heading (6 deg) have held for 1 s; a floor guard caps the depth to keep
+  0.30 m under the DVL. The course is anchored at the placement point along the saved
+  heading. The TWIN RUNS THE SAME CODE PATH (`real/sim_run.sh INIT=1`: surface spawn,
+  estimator reset at the float point, `--init`), in a 0.965 m pool (38 in, as
+  reported by the operator; the published fill line is 1.05 m). If the real floating
+  DVL altitude recorded in `start_gate.json` differs from the twin's 0.81 m by more
+  than 0.05 m, the campaign in (c) is re-run at the matching water depth before the
+  session and logged here as Amendment 6b.
+  (c) BINDING PREDICTIONS, v19 twin, 4 repeats (`--seed 1..4`; the seed fixes the
+  sensor streams, not the closed-loop timing, so the spread is the twin's run-to-run
+  floor), Intex pool twin, RMSE (m), campaign `pred_v19` (84 runs, no aborted
+  start-up; settle 10.5-13.6 s; depth target -0.497 m, guard inactive at this depth):
+
+  | rect rank | law | RMSE | ±rep |  | line rank | law | RMSE | ±rep |
+  |---|---|---|---|---|---|---|---|---|
+  | 1 | pursuit | 0.1119 | 0.0021 |  | 1 | alos | 0.1337 | 0.0031 |
+  | 2 | los | 0.1155 | 0.0028 |  | 2 | los | 0.1366 | 0.0028 |
+  | 3 | smc | 0.1159 | 0.0025 |  | 3 | ilos | 0.1434 | 0.0017 |
+  | 4 | alos | 0.1163 | 0.0020 |  | 4 | fuzzy_lab | 0.1470 | 0.0010 |
+  | 5 | p | 0.1222 | 0.0011 |  | 5 | pursuit | 0.1801 | 0.0011 |
+  | 6 | ilos | 0.1331 | 0.0026 |  | 6 | smc | 0.2168 | 0.0026 |
+  | 7 | fuzzy_lab | 0.1663 | 0.0008 |  | 7 | p | 0.2221 | 0.0016 |
+
+  (d) WHAT CHANGED vs Amendment 4 and WHY. Spearman between the Amendment-4 and
+  v19 orders is +0.93 on both courses. Rect: pursuit and los stay 1st/2nd, fuzzy_lab
+  stays last; p and ilos swap (5th/6th); los, smc and alos are now within 0.8 mm and
+  will be treated as inseparable by the primary statistic. Line: alos and los swap
+  (2.9 mm), ilos and fuzzy_lab swap (3.6 mm); pursuit, smc, p unchanged. An
+  attribution set (same v19 model on the pre-Amendment-6 path: 1.05 m, spawn at
+  depth, no start-up; 2 repeats) reproduces the full set within 1-2 mm per law, so
+  the change is attributable to the vehicle model (trim + payload), not to the
+  start-up or pool depth. Absolute RMSE fell 20-25 % on the rectangle while lap
+  times did not change (p: 40.6 s), i.e. gentler cornering; corner overshoot
+  shrank from 0.27-0.42 m to 0.17-0.29 m beyond the course ends.
+  (e) FAILURE-MODE PREDICTION RESTATED. Under v19, fuzzy_lab remains the law with the
+  largest lateral excursion (max |y| 0.92-0.94 m over 4 repeats; all others
+  0.73-0.86 m) but it no longer crosses the 1.0 m fence (Amendment 2 / v18: 1.01-
+  1.03 m). Binding prediction: fuzzy_lab is the law most likely to approach the fence;
+  no law breaches it. A real fuzzy_lab breach would indicate lateral disturbance the
+  twin does not model (the tether, whose ~0.5 N stability cliff for fuzzy_lab was
+  established 2026-10-23). The 2026-10-08 shakedown breach at 1.03 m occurred under
+  the old surface-start protocol and is disclosed as prior observation.
+  (f) POWER (`sim/power_analysis.py`, v19 spreads; chance threshold rho >= 0.679 at
+  n = 7). Rectangle: 3 repeats 0.98/0.83/0.55 at 5/10/20 mm real spread, 4 repeats
+  0.99/0.88/0.61. Line: >= 0.96 in every case. The primary statistic (pairwise-
+  separable agreement pooled across both courses, Amendments 2-3) is unchanged.
+  SESSION PLAN: 3 repeats per law per course (42 runs, randomized order as printed in
+  `real/CONTROLLER_RUN_INSTRUCTIONS.md`); a 4th rectangle repeat is now strongly
+  recommended rather than optional. Runs whose start-up aborts are not runs (folder
+  `*_ABORTED`) and are simply repeated; runs whose floor guard raised the target are
+  kept and the depth reported.
+  (g) Fidelity under the v19 model (tub scorecard, same configuration as the 41/41
+  result) is being re-scored at the time of writing and will be appended as a
+  context line; it is not a hypothesis of this pre-registration.

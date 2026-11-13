@@ -22,25 +22,27 @@ import itertools
 
 import numpy as np
 
-# Frozen 4-seed in-pool predictions, v18 twin, seeded runs (2026-10-28).
-# Seven registered entrants: (RMSE mean, seed std) per course.
+# Frozen 4-repeat in-pool predictions, v19 twin (DVL A50 payload, measured 12.7 deg
+# nose-down trim, 0.965 m pool, real start-up in the twin), 2026-11-13, Amendment 6.
+# Seven registered entrants: (RMSE mean, repeat std) per course. --seed fixes the
+# sensor streams, not the closed-loop timing, so the std is the twin's run-to-run floor.
 BENCH_RECT = {
-    "pursuit":   (0.1431, 0.0012),
-    "los":       (0.1499, 0.0016),
-    "alos":      (0.1591, 0.0032),
-    "smc":       (0.1676, 0.0024),
-    "ilos":      (0.1707, 0.0009),
-    "p":         (0.1769, 0.0031),
-    "fuzzy_lab": (0.2180, 0.0019),
+    "pursuit":   (0.1119, 0.0021),
+    "los":       (0.1155, 0.0028),
+    "smc":       (0.1159, 0.0025),
+    "alos":      (0.1163, 0.0020),
+    "p":         (0.1222, 0.0011),
+    "ilos":      (0.1331, 0.0026),
+    "fuzzy_lab": (0.1663, 0.0008),
 }
 BENCH_LINE = {
-    "los":       (0.1343, 0.0017),
-    "alos":      (0.1430, 0.0027),
-    "fuzzy_lab": (0.1467, 0.0031),
-    "ilos":      (0.1510, 0.0010),
-    "pursuit":   (0.1780, 0.0024),
-    "smc":       (0.2170, 0.0037),
-    "p":         (0.2241, 0.0024),
+    "alos":      (0.1337, 0.0031),
+    "los":       (0.1366, 0.0028),
+    "ilos":      (0.1434, 0.0017),
+    "fuzzy_lab": (0.1470, 0.0010),
+    "pursuit":   (0.1801, 0.0011),
+    "smc":       (0.2168, 0.0026),
+    "p":         (0.2221, 0.0016),
 }
 BENCHES = {"rect": BENCH_RECT, "line": BENCH_LINE}
 ALPHA = 0.05
