@@ -23,23 +23,42 @@ thrusters immediately.
 
 ## Step 1. Get the code (first time only)
 
-If you use Docker (the usual lab setup), on the laptop, not inside the container:
+In a normal terminal on the laptop:
 ```bash
 cd <path to>/BlueROV-Tools
 git clone -b pilot-controllers https://github.com/ChideraIbe123/Holo-for-CACMS.git pilot_kit
+echo pilot_kit/ >> .git/info/exclude
 ```
 Already have it? Update it instead:
 ```bash
 cd <path to>/BlueROV-Tools/pilot_kit && git pull
 ```
-Git will say `pilot_kit/` is untracked in BlueROV-Tools. That is fine. Do not commit it.
+Not sure where BlueROV-Tools is? It is usually `~/ros2_ws/src/BlueROV-Tools`. Go into it
+and type `pwd` to see its full path.
+
+---
+
+## How to open a ROS 2 terminal
+
+You need four of these (one for the GUI, three for Terminals A, B, C). Open each the
+way you normally do for the lab GUI. On the lab laptop ROS 2 is installed directly (no
+Docker), so in each new terminal:
+```bash
+source /opt/ros/jazzy/setup.bash        # if `ls /opt/ros` shows humble instead, use humble
+source ~/ros2_ws/install/setup.bash
+cd <path to>/BlueROV-Tools/pilot_kit/real
+python3 -c "import rclpy, pymavlink; print('ok')"      # must print ok
+```
+If `~/ros2_ws/install/setup.bash` does not exist, the lab workspace has not been built:
+`cd ~/ros2_ws && colcon build` once, then try again. (Docker setups instead use
+`docker/scripts/ros2-shell.sh` from the BlueROV-Tools folder.)
 
 ---
 
 ## Step 2. Start the vehicle
 
 1. Power on the ROV. Wait for BlueOS to come up.
-2. Open the lab GUI:
+2. In your first ROS 2 terminal, start the lab GUI:
    ```bash
    ros2 run bluerov_gui bluerov_gui
    ```
@@ -53,18 +72,18 @@ Git will say `pilot_kit/` is untracked in BlueROV-Tools. That is fine. Do not co
 
 ---
 
-## Step 3. Open three terminals
+## Step 3. Open three more ROS 2 terminals
 
-Open three ROS 2 terminals the way you normally do. With Docker, run this in each:
-```bash
-docker/scripts/ros2-shell.sh
-source /workspaces/ros2_ws/install/setup.bash
-cd /workspaces/ros2_ws/src/BlueROV-Tools/pilot_kit/real
-```
+Open them as described in "How to open a ROS 2 terminal" above.
 
 **Terminal A: position tracking.** Paste this and leave it running:
 ```bash
 ros2 run bluerov_dr dead_reckon --ros-args -p estimator_mode:=legacy_integrator
+```
+Check it from Terminal C:
+```bash
+ros2 param get /dvl_dead_reckon estimator_mode     # must say legacy_integrator
+ros2 topic hz /deadreckon/odom                     # must show messages arriving (Ctrl-C to stop)
 ```
 
 **Terminal B: control and emergency stop.** For the **rectangle** runs:
