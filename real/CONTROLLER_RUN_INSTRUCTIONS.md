@@ -341,7 +341,8 @@ fuzzy_lab rect 1 |           |                   |       |
 
 ## Notes for whoever maintains this
 
-- Start-up (`course_runner.py --init`, Shrey Mathur 2026-11-12): the lab's
+- Start-up (`course_runner.py --init`, Sumanth, pushed 2026-11-12; the commits carry
+  Shrey Mathur's git identity): the lab's
   `dead_reckon` node zeroes depth at `/deadreckon/reset`, which `run_one.sh` sends while
   the vehicle floats, so depth is metres below the floating position. The runner refuses
   unless depth reads within 0.10 m of zero, locks the depth target from five floating
