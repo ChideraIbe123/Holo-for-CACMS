@@ -21,12 +21,48 @@ terms used.
 import numpy as np
 
 # ============================== PARAMETERS ==========================================
-# Rigid body (Wu 2018 Table 5.1)
-MASS = 11.5                    # kg
-WEIGHT = 112.8                 # N
-BUOYANCY = 114.8               # N  (net ~0.2 kg positive, like the real vehicle)
-INERTIA = np.diag([0.16, 0.16, 0.16])          # kg m^2
-R_G = np.array([0.0, 0.0, -0.02])              # CG 2 cm BELOW CB (FLU: down = -z)
+# Rigid body (Wu 2018 Table 5.1): the bare vehicle
+G = 9.81
+MASS_BASE = 11.5               # kg
+WEIGHT_BASE = 112.8            # N
+INERTIA_BASE = np.diag([0.16, 0.16, 0.16])     # kg m^2
+BG = 0.02                      # m, CG below CB (Wu); sets the pitch/roll stiffness
+
+# v19 (2026-11-13): the lab's payload and trim, from measurements.
+# Water Linked DVL A50 (datasheet: 170 g in air, 105 g in water, 66 x 25 mm) at the
+# lab's measured mount (BlueROV-Tools config/sensor_transforms.yaml, y-forward frame
+# x=-88.9 y=-171.45 z=-114.3 mm -> FLU): 17 cm aft, 9 cm left, 11 cm below the centre.
+DVL_POS = np.array([-0.171, 0.089, -0.114])
+DVL_MASS_AIR = 0.170
+DVL_MASS_WATER = 0.105         # net in-water weight
+# Net buoyancy is NOT measured: Blue Robotics' setup guidance is "slightly positive"
+# after re-ballasting for payloads; 0.2 kg (Wu's value) is kept as the assumption.
+# Replace with (weight in air, waterline) when the lab measures them.
+NET_BUOYANCY_KG = 0.2
+# Static attitude at float, MEASURED from the tub float recordings
+# (rostest_floating_armed/unarmed, 1800 samples each, sd 0.02 deg): pitch +12.72 deg
+# (REP-103 FLU: positive = nose DOWN), roll +0.49 deg. Independently confirmed by the
+# resting accelerometer: accel_x = -2.01 m/s^2 = -g sin(11.8 deg). Driving, the
+# vehicle sits ~10 deg nose-down, so a fifth of forward thrust points at the floor
+# (the "driving forward pulls it down" seen on 2026-11-12). The bare Wu body floats
+# level; this trim is the single largest static difference from the lab's vehicle.
+TRIM_PITCH_DEG = 12.72
+TRIM_ROLL_DEG = 0.49
+
+MASS = MASS_BASE + DVL_MASS_AIR                                   # 11.67 kg
+WEIGHT = WEIGHT_BASE + DVL_MASS_AIR * G
+BUOYANCY = WEIGHT + NET_BUOYANCY_KG * G
+# Wu's inertia about the body origin + the DVL as a point mass (parallel axis):
+# roll +2.2 %, pitch +4.5 %, yaw +3.9 %
+INERTIA = INERTIA_BASE + DVL_MASS_AIR * (np.dot(DVL_POS, DVL_POS) * np.eye(3)
+                                         - np.outer(DVL_POS, DVL_POS))
+# CG: at rest gravity passes through CG and CB, so the measured float attitude fixes
+# the DIRECTION of CG from CB (world "down" expressed in the body frame at that
+# attitude); Wu's BG fixes its distance. The DVL's own CG shift (2.5 mm aft, 1.3 mm
+# left, 1.7 mm down at 170 g) is part of what the lab's ballast placement produced;
+# the measured attitude already contains it.
+_th, _ph = np.radians(TRIM_PITCH_DEG), np.radians(TRIM_ROLL_DEG)
+R_G = BG * np.array([np.sin(_th), -np.cos(_th) * np.sin(_ph), -np.cos(_th) * np.cos(_ph)])
 R_B = np.array([0.0, 0.0, 0.0])                # body origin at CB
 
 # Added mass (Wu 2018 Table 5.2), positive-definite diagonal

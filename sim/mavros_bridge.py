@@ -725,6 +725,14 @@ def main():
     parser.add_argument('--pool', choices=['intex'], default=None,
                         help='spawn the lab pool geometry and start inside it '
                              '(benchmark runs in the actual test environment)')
+    parser.add_argument('--water-depth', type=float, default=None, metavar='M',
+                        help='with --pool intex: water depth in metres (default 1.05, the '
+                             'published fill line). The 2026-11-12 session pool held ~0.965 m '
+                             '(38 in); the floor and /dvl/altitude follow this value.')
+    parser.add_argument('--spawn-surface', action='store_true',
+                        help='with --pool intex and --control: spawn floating at the static float '
+                             'point instead of at depth, so the course_runner --init start-up '
+                             '(sink + turn, sensor-verified) runs in the twin exactly as on the vehicle')
     parser.add_argument('--replay', type=str, default=None,
                         help='npz command profile from a real bag (extract_cmd_profile.py); '
                              'replays real thruster commands instead of the scripted path')
@@ -922,7 +930,9 @@ def main():
 
     if args.pool == 'intex':
         import intex_pool
-        POOL_FLOOR_DEPTH = 1.05    # v16: /dvl/altitude bottom distance in the pool twin
+        if args.water_depth is not None:
+            intex_pool.FLOOR_Z = -float(args.water_depth)   # read by spawn_pool/spawn_pipe at call time
+        POOL_FLOOR_DEPTH = -intex_pool.FLOOR_Z    # v16: /dvl/altitude bottom distance in the pool twin
         for agent in scenario['agents']:
             if agent['agent_name'] == AGENT_NAME:
                 agent['location'] = list(intex_pool.SPAWN)
@@ -930,7 +940,10 @@ def main():
                 if replay is not None:   # v18: same float-point spawn rule in the pool
                     agent['location'][2] = (_static_float_z(WATER_SURFACE_Z)
                                             if replay['z0'] > -0.3 else replay['z0'])
-        print('[bridge] pool: Intex 26770 twin (4x2 m, 1.05 m water) — in-pool spawn')
+                elif args.spawn_surface:
+                    agent['location'][2] = _static_float_z(WATER_SURFACE_Z)
+        print(f'[bridge] pool: Intex 26770 twin (4x2 m, {POOL_FLOOR_DEPTH:.3f} m water) — in-pool spawn '
+              f'{"at the surface float point" if args.spawn_surface and replay is None else "at depth"}')
 
     if model is not None:
         # DynamicsSensor captures every tick in standard mode; keep GT topic at 50 Hz

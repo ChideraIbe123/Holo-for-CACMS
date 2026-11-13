@@ -26,7 +26,8 @@ Safety behaviour (none of it replaces a person at the pool):
   - no fresh /cmd_vel for --cmd-timeout s -> neutral sticks (still sent, so the
     autopilot's pilot-input failsafe stays quiet and the vehicle stays armed)
   - geofence in the course frame (origin and heading latched when a run starts);
-    leaving it latches a stop until 'c' is pressed
+    leaving it latches a stop until 'c' is pressed. A runner with --init re-anchors
+    the fence on /course/origin once it has settled at depth and heading
   - --max-run s per run
   - neutral sticks, then DISARM, on exit
 
@@ -48,8 +49,9 @@ import threading
 import time
 
 import rclpy
-from geometry_msgs.msg import TwistStamped
+from geometry_msgs.msg import PoseStamped, TwistStamped
 from nav_msgs.msg import Odometry
+from std_msgs.msg import String
 
 NEUTRAL = (0.0, 500.0, 0.0)   # x, z, r
 JOG = {'i': (200.0, 500.0, 0.0), 'k': (-200.0, 500.0, 0.0),
@@ -95,9 +97,12 @@ class StickBridge:
             self.log.info(f'MAVLink connected (sys={self.master.target_system})')
             threading.Thread(target=self._heartbeat_loop, daemon=True).start()
         self.auto_pub = node.create_publisher(TwistStamped, '/auto/cmd', 10)
+        # every safety-relevant event, also on a topic so run_one.sh's bag records it
+        self.status_pub = node.create_publisher(String, '/auto/status', 10)
         self.loop_pub = node.create_publisher(TwistStamped, a.loopback_topic, 10) if a.loopback else None
         node.create_subscription(TwistStamped, a.in_topic, self.on_cmd, 10)
         node.create_subscription(Odometry, '/deadreckon/odom', self.on_odom, 50)
+        node.create_subscription(PoseStamped, '/course/origin', self.on_origin, 10)
         self.dt = 1.0 / a.rate
         node.create_timer(self.dt, self.tick)
         node.create_timer(0.5, self.poll_vehicle)
@@ -108,6 +113,18 @@ class StickBridge:
         if not a.no_keys and sys.stdin.isatty():
             threading.Thread(target=self._key_loop, daemon=True).start()
             self.log.info('keys: a=arm  SPACE/d=DISARM+stop  c=clear stop  i/k/j/l=jog')
+
+    def event(self, text, level='info'):
+        # one call site per severity: rclpy refuses a call site whose severity changes
+        if level == 'error':
+            self.log.error(text)
+        elif level == 'warn':
+            self.log.warn(text)
+        else:
+            self.log.info(text)
+        m = String()
+        m.data = text
+        self.status_pub.publish(m)
 
     # ---------------------------------------------------------------- vehicle link
     def now(self):
@@ -130,7 +147,7 @@ class StickBridge:
                 self.master.mav.command_long_send(
                     self.master.target_system, self.master.target_component,
                     m.MAV_CMD_COMPONENT_ARM_DISARM, 0, 1 if arm else 0, 0, 0, 0, 0, 0, 0)
-        self.log.warn('ARM sent' if arm else 'DISARM sent')
+        self.event('ARM sent' if arm else 'DISARM sent', 'warn')
 
     def poll_vehicle(self):
         """Track armed state and flight mode from the autopilot's heartbeat."""
@@ -149,7 +166,7 @@ class StickBridge:
                 mode = inv.get(msg.custom_mode, str(msg.custom_mode))
                 if (armed, mode) != (self.armed, self.mode):
                     self.armed, self.mode = armed, mode
-                    self.log.warn(f'vehicle: {"ARMED" if armed else "disarmed"}, mode {mode}')
+                    self.event(f'vehicle: {"ARMED" if armed else "disarmed"}, mode {mode}', 'warn')
                     if mode != 'MANUAL':
                         self.log.warn('stick gains were measured in MANUAL mode; yaw gain is not valid here')
 
@@ -174,13 +191,13 @@ class StickBridge:
                 elif k in (' ', 'd'):
                     self.tripped = self.tripped or 'operator stop'
                     self._arm_disarm(False)
-                    self.log.error('OPERATOR STOP latched')
+                    self.event('OPERATOR STOP latched', 'error')
                 elif k == 'c':
                     if self.now() - self.cmd_time < self.a.cmd_timeout:
                         self.log.warn('a controller is still publishing: stop it before clearing')
                     else:
                         self.tripped, self.active, self.origin = None, False, None
-                        self.log.warn('stop cleared')
+                        self.event('stop cleared', 'warn')
                 elif k in JOG:
                     self.jog = (JOG[k], time.monotonic())
         finally:
@@ -194,6 +211,15 @@ class StickBridge:
     def on_odom(self, msg):
         p = msg.pose.pose.position
         self.pose = (p.x, p.y, yaw_from_quat(msg.pose.pose.orientation))
+
+    def on_origin(self, msg):
+        """course_runner --init: the course is laid out from here, so the fence is too."""
+        if not self.active or self.tripped is not None:
+            return
+        p = msg.pose.position
+        self.origin = (p.x, p.y, yaw_from_quat(msg.pose.orientation))
+        self.event(f'fence re-anchored to the course start: x={p.x:+.2f} y={p.y:+.2f} '
+                   f'heading {math.degrees(self.origin[2]):+.1f} deg, box {self.fence}')
 
     def course_xy(self):
         if self.origin is None or self.pose is None:
@@ -210,10 +236,12 @@ class StickBridge:
         if fresh and not self.active and self.tripped is None:
             self.active, self.run_start = True, now
             self.origin = self.pose
-            self.log.info('run started' + ('' if self.pose else ' (no estimator pose yet: fence inactive)'))
+            self.event('run started' + (f': fence anchored at x={self.pose[0]:+.2f} y={self.pose[1]:+.2f} '
+                                        f'heading {math.degrees(self.pose[2]):+.1f} deg, box {self.fence}'
+                                        if self.pose else ' (no estimator pose yet: fence inactive)'))
         if self.active and not fresh and self.tripped is None and now - self.cmd_time > a.cmd_timeout + a.release:
             self.active, self.origin = False, None
-            self.log.info('run ended: holding neutral')
+            self.event('run ended: holding neutral')
         if self.active and self.tripped is None:
             xy = self.course_xy()
             if xy is not None and not (self.fence[0] <= xy[0] <= self.fence[1]
@@ -222,7 +250,7 @@ class StickBridge:
             elif now - self.run_start > a.max_run:
                 self.tripped = f'run longer than {a.max_run:.0f} s'
             if self.tripped:
-                self.log.error(f"STOP LATCHED: {self.tripped}. Stop the controller, then press 'c'.")
+                self.event(f"STOP LATCHED: {self.tripped}. Stop the controller, then press 'c'.", 'error')
         if self.tripped is not None:
             self.sticks = list(NEUTRAL)          # immediate, no slew
         else:
