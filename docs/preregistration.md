@@ -250,3 +250,7 @@ intervention voided and rerun; both rosbags and live `sim_dr.csv` recorded.
   (g) Fidelity under the v19 model (tub scorecard, same configuration as the 41/41
   result) is being re-scored at the time of writing and will be appended as a
   context line; it is not a hypothesis of this pre-registration.
+  (g, result 2026-11-13) Fidelity under the v19 model, tub scorecard in the Amendment-
+  4 configuration (`--venue tub --rel-alt-bias -0.0326 --accel-lp 1.25`, 4 seeds,
+  `scorecard_v19tub*.json`): **41/41 in every seed and pooled** (secondary MWU
+  40/40/41/41), identical to the v18 result. Context only, not a hypothesis.
