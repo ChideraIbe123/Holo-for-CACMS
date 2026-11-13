@@ -3,7 +3,8 @@
 A checklist for running the controller test on the BlueROV2 from the topside laptop.
 Do the steps in order. Every command can be copied and pasted.
 
-**What happens:** the ROV sinks to 0.5 m, drives a short course by itself, then stops. You do this
+**What happens:** the ROV sinks, turns to face the back wall, drives a short course by
+itself, then stops. You do this
 42 times: 7 controllers, 2 courses, 3 times each. It takes about 2 hours in the water.
 
 **Safety:** keep one hand near the **SPACE** key in Terminal B. SPACE stops the
@@ -123,24 +124,41 @@ Do not continue.
 
 ---
 
-## Step 5. How depth works (read once)
+## Step 5. Save the course heading (once per session)
 
-The ROV drives **0.5 m below the surface**, the same depth the simulator used. You do
-not set anything. When you start a run:
+Every run starts by turning the ROV to the same heading, so all runs face the same way
+regardless of how it was placed. Save that heading once, before the first run:
 
-1. The script zeroes the depth reading **where the ROV is at that moment**. So the ROV
-   must be **floating freely** when you press Enter: not held, not touching the wall,
-   not still sinking from the last run.
-2. The ROV sinks straight down with no forward motion and waits until its depth sensor
-   has read 0.5 m (within 5 cm) for a full second. Terminal C prints
-   `at depth: -0.50 m after 4.1 s (settled)`.
-3. Only then does the course start, laid out from where the ROV is at that moment.
+1. Put the ROV on the rectangle start mark, floating, **nose pointing at the back wall**
+   (the direction the first leg of the course goes). Hold it still.
+2. In Terminal C:
+   ```bash
+   python3 save_heading.py
+   ```
+   It prints `saved heading ... deg`. If it says the heading moved while sampling,
+   hold the ROV steadier and run it again.
 
-If the ROV was not floating (depth did not read about 0), the script prints
-`NOT STARTING` and does nothing. Let the ROV float up, then run the same command again.
+Redo this only if you move the start mark or the pool layout changes. The same heading
+is used for the line runs, so lay the line course out along the same direction.
 
-Each run folder gets a `depth_gate.json` with the depth before, during and after the
-dive, and the DVL's height above the floor, so depth can be checked afterwards.
+### What a run does before it drives (read once)
+
+1. The script zeroes the depth reading **where the ROV is at that moment**, so the ROV
+   must be **floating freely** when you press Enter: not held, not touching the wall, not
+   still sinking from the last run.
+2. It reads the DVL's height above the floor and picks the depth: 0.5 m, or less if that
+   would leave under 0.30 m of water beneath the DVL (in a 38 in pool that is about
+   0.35 to 0.45 m). Terminal C prints the depth it chose.
+3. It sinks and turns on the spot to the saved heading, with no forward motion, and
+   waits until depth (within 5 cm) and heading (within 6 degrees) have both held for a
+   second. Terminal C prints `initialised after N s ... Course starts.`
+4. The course is laid out from where you placed the ROV, pointing along the saved
+   heading. Then it drives.
+
+If it cannot settle within 45 s it does **not** drive: Terminal C prints `NOT STARTING`,
+the run folder is renamed `..._ABORTED_<time>`, and you simply run the same command
+again. Each run folder gets `start_gate.json` (depth, heading, altitude before and
+during the run) and `init.csv` (the start-up trace).
 
 ---
 
@@ -154,12 +172,13 @@ dive, and the DVL's height above the floor, so depth can be checked afterwards.
    ./run_one.sh ilos rect 1
    ```
    That means controller `ilos`, course `rect`, repeat `1`.
-   It prints `diving to -0.5 m`, then a few seconds later `at depth: -0.50 m ... (settled)`,
-   then the ROV starts driving. `NOT STARTING` means the ROV was not floating freely:
-   let it float up and run the same command again.
+   It prints the depth it chose, then after a few seconds `initialised after N s: depth
+   ..., heading error ... Course starts.` and the ROV drives. `NOT STARTING` means it
+   could not settle (or was not floating freely): let it float up, check Terminal B is
+   still in passthrough mode, and run the same command again.
 4. Wait. The ROV drives the course and stops by itself. Terminal B says
    `run ended: holding neutral`.
-5. Fill in the run sheet: run name, battery voltage, the `at depth` line, anything odd.
+5. Fill in the run sheet: run name, battery voltage, the `initialised after` line, anything odd.
 6. Bring the ROV back to the start mark (keys `i` `k` `j` `l`, or by hand).
 
 Then do the next run on the list.
@@ -274,8 +293,10 @@ If time is short, finish all 42 before doing any extras.
 | Terminal B says `STOP LATCHED: geofence` | The ROV left its safety box. Ctrl-C in Terminal C, move the ROV back, press `c`, arm again. |
 | ROV heads for a wall and nothing stops it | Press **SPACE**. Note it on the run sheet. |
 | Terminal C prints `NOT STARTING: depth reads ...` | The ROV was not floating freely when you pressed Enter. Let it float up, wait 5 s, run the same command again. |
-| Terminal C prints `TIMED OUT, starting anyway` | The ROV could not reach 0.5 m in 12 s. The run continues. Note it on the run sheet. Check Terminal B was started with `--depth-mode passthrough` and the battery is not low. |
-| ROV keeps sinking, popping up, or bobbing | Ctrl-C in Terminal B, restart it with `--depth-mode neutral` instead of `--depth-mode passthrough`. The ROV now stays at the surface and every run waits 12 s before driving. Write **surface mode** on the run sheet for every run after this. |
+| Terminal C prints `NOT STARTING: not settled after 45 s` | It could not hold depth and heading together. The folder is renamed `_ABORTED`; run the same command again. If it happens twice in a row: check Terminal B is in `--depth-mode passthrough`, the battery is above 15 V, and the tether is slack. |
+| Terminal C prints `no saved heading` | Step 5 was skipped. Run `python3 save_heading.py` with the ROV facing the back wall. |
+| Terminal C warns `depth target reduced` | Normal in a shallow pool: it keeps 0.30 m of water under the DVL. Note the depth on the run sheet. |
+| ROV keeps sinking, popping up, or bobbing | Ctrl-C in Terminal B, restart it with `--depth-mode neutral` instead of `--depth-mode passthrough`. The ROV now stays at the surface. Runs will NOT start on their own in this mode (the start-up needs depth); only use it to recover the ROV. |
 
 **If you had to stop a run:** that run does not count, but keep its folder. Redo it at
 the end of the same block of 7, adding `b` to the repeat number:
@@ -306,31 +327,35 @@ Date: ____________   Operator: ____________
 
 Water depth, floor to surface, middle of the pool: ______ (simulator: 1.05 m)
 
-Run name         | Battery V | at depth after | Done? | Notes
------------------+-----------+----------------+-------+-----------------------
-ilos rect 1      |           |                |       |
-los rect 1       |           |                |       |
-fuzzy_lab rect 1 |           |                |       |
-...              |           |                |       |
+Saved heading (deg): ______
+
+Run name         | Battery V | initialised after | Done? | Notes
+-----------------+-----------+-------------------+-------+--------------------
+ilos rect 1      |           |                   |       |
+los rect 1       |           |                   |       |
+fuzzy_lab rect 1 |           |                   |       |
+...              |           |                   |       |
 ```
 
 ---
 
 ## Notes for whoever maintains this
 
-- Depth: the lab's `dead_reckon` node zeroes depth at `/deadreckon/reset`
-  (`pos[2] = baro_depth - baro_depth_at_reset`), and `run_one.sh` sends that reset
-  right before each run, so the controller's depth is metres below the FLOATING
-  position and `DEPTH=-0.5` (the default) is 0.5 m below it. The autopilot's own
-  depth zero is irrelevant. `--dive-first` makes the runner refuse unless depth reads
-  within 0.10 m of zero at start, sink with zero surge/yaw until the sensor is within
-  0.05 m of the target for 1.0 s (12 s timeout, flagged), then lay out the course.
-  Tested offline: `python3 test_depth_gate.py`.
-- Simulator comparison: the sim starts each run at depth with no reset; its depth
-  sensor sits 0.50 m below the surface. The real sensor floats about 6 cm below the
-  surface, so after a 0.5 m dive it sits about 0.56 m down: a 6 cm difference,
-  recorded in `depth_gate.json`, negligible for the dynamics at that depth. The sim
-  does NOT use `--dive-first` (its predictions are unchanged by this feature).
+- Start-up (`course_runner.py --init`, Shrey Mathur 2026-11-12): the lab's
+  `dead_reckon` node zeroes depth at `/deadreckon/reset`, which `run_one.sh` sends while
+  the vehicle floats, so depth is metres below the floating position. The runner refuses
+  unless depth reads within 0.10 m of zero, locks the depth target from five floating
+  DVL altitudes (requested 0.5 m, capped to keep 0.30 m under the DVL), then sinks and
+  turns to the saved heading with PI loops (depth damped by the depth-sensor rate, yaw
+  by the gyro, 0.5 rad/s minimum yaw outside tolerance because smaller sticks sit in
+  the thruster dead band), and starts only when depth (0.05 m) and heading (6 deg) hold
+  for 1.0 s; 45 s timeout aborts (exit 3). The course is anchored at the placement
+  point along the saved heading; the stick converter re-anchors its geofence there.
+  Offline tests: `python3 test_start_gate.py`.
+- Simulator comparison: the same start-up runs in the twin (`sim_run.sh INIT=1`:
+  surface spawn, reset at the float point, `--init` with heading 0, 0.965 m water), so
+  the predictions include the floor-guarded depth. The twin's vehicle model carries the
+  DVL A50 payload and the measured 12.7 deg nose-down float trim (v19).
 - The run order was generated with a fixed seed (Python `random.Random(20261103)`), as
   the pre-registration requires a randomized order.
 - Position drifts a few percent of distance travelled. The safety box uses the estimated
@@ -347,6 +372,8 @@ fuzzy_lab rect 1 |           |                |       |
 | `course_runner.py` | Runs one controller |
 | `cmdvel_to_manual.py` | Turns controller output into stick commands; arm, stop, nudge |
 | `run_one.sh` | One recorded run |
-| `test_depth_gate.py` | Offline test of the dive-then-start logic |
+| `save_heading.py` | Saves the course heading the start-up turns to |
+| `test_start_gate.py` | Offline test of the start-up (sink + turn) logic |
+| `test_depth_gate.py` | Offline test of the older dive-only start (`--dive-first`) |
 | `score_runs.py` | Scores finished runs |
 | `llm_pilot.py` | Optional camera pilot (see `LLM_PILOT.md`) |
