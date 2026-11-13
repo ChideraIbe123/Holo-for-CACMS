@@ -155,3 +155,23 @@ intervention voided and rerun; both rosbags and live `sim_dr.csv` recorded.
   law per course (42 runs), randomized order, with a fourth rect repeat for
   all laws if pool time remains. This supersedes the 4-repeat/5-law plan of
   Amendment 1.
+- **2026-11-12 — Amendment 5: real-run start condition aligned to the simulator
+  (added BEFORE the confirmatory session; no confirmatory data exists).**
+  The simulator begins every prediction run with the vehicle already at its
+  0.5 m target depth and stationary (in-pool spawn, `intex_pool.SPAWN`). The
+  real protocol previously started the controller with the vehicle floating at
+  the surface, so the first ~2 s of each real run (20% of a line run) were a
+  dive the simulator never performed. From this amendment, `run_one.sh` passes
+  `--dive-first` to `course_runner.py`: the runner (a) requires the estimator
+  depth to read within 0.10 m of zero at start (the estimator zeroes depth at
+  the `/deadreckon/reset` sent while the vehicle floats), (b) sinks with zero
+  surge and yaw until the depth sensor is within 0.05 m of the target for
+  1.0 s (12 s timeout, flagged in `depth_gate.json`), and (c) lays out the
+  course from the pose at that moment. Depth and DVL altitude are recorded
+  before, at and during the course. The steering laws, the simulator, and the
+  Amendment 4 predictions are unchanged: the simulator path does not use the
+  flag and starts at depth already. Known residual: the real depth sensor
+  floats ~0.06 m below the surface, so a 0.5 m dive places it ~0.56 m down
+  versus 0.50 m in the simulator; recorded, not corrected. Runs that time out
+  the dive gate are reported separately. Code: `real/course_runner.py`
+  (`DepthGate`), offline test `real/test_depth_gate.py`.

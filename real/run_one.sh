@@ -5,8 +5,10 @@
 # Resets the estimator, starts a bag, runs the controller until it finishes, stops the bag.
 # cmdvel_to_manual.py must already be running in another terminal, vehicle armed.
 # Optional environment: DEPTH (default -0.5), LINE_LENGTH (default 2.4), OUT (default ./runs)
-# DEPTH is in the autopilot's rel_alt frame, whose zero is not the water surface: set it
-# to (floating surface reading - 0.5) to match the simulator's 0.5 m (instructions Step 4b).
+# DEPTH is metres below the FLOATING position: the estimator zeroes depth at the reset
+# sent below, so the vehicle must be floating freely when this script starts. The runner
+# then sinks to DEPTH and confirms it with the depth sensor before the course begins
+# (--dive-first), matching the simulator, which starts every run at depth.
 set -e
 LAW=${1:?law}; COURSE=${2:?course}; REP=${3:?rep}
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -23,10 +25,9 @@ ros2 bag record -o "$OUT/bag" $TOPICS > "$OUT/bag.log" 2>&1 &
 BAG=$!
 sleep 3
 DEPTH=${DEPTH:--0.5}
-echo "$DEPTH" > "$OUT/depth_target.txt"
-echo "=== $TAG: controller starting, depth target $DEPTH ==="
+echo "=== $TAG: diving to $DEPTH m below the floating position, then the course starts ==="
 python3 "$HERE/course_runner.py" --law "$LAW" --course "$COURSE" --name "$TAG" \
-    --depth-target "$DEPTH" --line-length "${LINE_LENGTH:-2.4}" --log "$OUT/runner.csv" || true
+    --depth-target "$DEPTH" --dive-first --line-length "${LINE_LENGTH:-2.4}" --log "$OUT/runner.csv" || true
 sleep 1
 # SIGINT is ignored by background jobs from non-interactive shells (session
 # 2026-10-08 finding: orphaned recorders wrote ~700 GB); SIGTERM works.

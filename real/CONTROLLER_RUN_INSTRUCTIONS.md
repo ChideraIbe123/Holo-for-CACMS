@@ -3,7 +3,7 @@
 A checklist for running the controller test on the BlueROV2 from the topside laptop.
 Do the steps in order. Every command can be copied and pasted.
 
-**What happens:** the ROV drives a short course by itself, then stops. You do this
+**What happens:** the ROV sinks to 0.5 m, drives a short course by itself, then stops. You do this
 42 times: 7 controllers, 2 courses, 3 times each. It takes about 2 hours in the water.
 
 **Safety:** keep one hand near the **SPACE** key in Terminal B. SPACE stops the
@@ -123,30 +123,24 @@ Do not continue.
 
 ---
 
-## Step 5. Depth check (do not skip)
+## Step 5. How depth works (read once)
 
-The ROV must drive **0.5 m below the surface**, the same depth the simulator used. Its
-depth sensor does not read exactly 0 at the surface, so you measure that first.
+The ROV drives **0.5 m below the surface**, the same depth the simulator used. You do
+not set anything. When you start a run:
 
-1. Let the ROV float at the surface, disarmed, away from the wall.
-2. In Terminal C:
-   ```bash
-   ros2 topic echo /mavros/global_position/rel_alt --once
-   ```
-3. Write the number on the run sheet as the **surface reading**.
-4. Subtract 0.5 from it, and set that as the depth for the session:
+1. The script zeroes the depth reading **where the ROV is at that moment**. So the ROV
+   must be **floating freely** when you press Enter: not held, not touching the wall,
+   not still sinking from the last run.
+2. The ROV sinks straight down with no forward motion and waits until its depth sensor
+   has read 0.5 m (within 5 cm) for a full second. Terminal C prints
+   `at depth: -0.50 m after 4.1 s (settled)`.
+3. Only then does the course start, laid out from where the ROV is at that moment.
 
-   | Surface reading | Type this in Terminal C |
-   |---|---|
-   | 0.00 | `export DEPTH=-0.50` |
-   | -0.05 | `export DEPTH=-0.55` |
-   | -0.10 | `export DEPTH=-0.60` |
-   | -0.15 | `export DEPTH=-0.65` |
+If the ROV was not floating (depth did not read about 0), the script prints
+`NOT STARTING` and does nothing. Let the ROV float up, then run the same command again.
 
-   For other readings: reading minus 0.5.
-
-**Do this check again after every battery swap or reboot.** If you close Terminal C,
-type the `export DEPTH=...` line again in the new one.
+Each run folder gets a `depth_gate.json` with the depth before, during and after the
+dive, and the DVL's height above the floor, so depth can be checked afterwards.
 
 ---
 
@@ -160,10 +154,12 @@ type the `export DEPTH=...` line again in the new one.
    ./run_one.sh ilos rect 1
    ```
    That means controller `ilos`, course `rect`, repeat `1`.
-   The first line it prints shows the depth. Check it matches your `DEPTH`.
+   It prints `diving to -0.5 m`, then a few seconds later `at depth: -0.50 m ... (settled)`,
+   then the ROV starts driving. `NOT STARTING` means the ROV was not floating freely:
+   let it float up and run the same command again.
 4. Wait. The ROV drives the course and stops by itself. Terminal B says
    `run ended: holding neutral`.
-5. Fill in the run sheet: run name, battery voltage, anything odd.
+5. Fill in the run sheet: run name, battery voltage, the `at depth` line, anything odd.
 6. Bring the ROV back to the start mark (keys `i` `k` `j` `l`, or by hand).
 
 Then do the next run on the list.
@@ -277,7 +273,9 @@ If time is short, finish all 42 before doing any extras.
 | Terminal B is frozen | Ctrl-C in Terminal B, or pull the ROV in by the tether. |
 | Terminal B says `STOP LATCHED: geofence` | The ROV left its safety box. Ctrl-C in Terminal C, move the ROV back, press `c`, arm again. |
 | ROV heads for a wall and nothing stops it | Press **SPACE**. Note it on the run sheet. |
-| ROV keeps sinking, popping up, or bobbing | Ctrl-C in Terminal B, restart it with `--depth-mode neutral` instead of `--depth-mode passthrough`. The ROV now stays at the surface. Write **surface mode** on the run sheet for every run after this. |
+| Terminal C prints `NOT STARTING: depth reads ...` | The ROV was not floating freely when you pressed Enter. Let it float up, wait 5 s, run the same command again. |
+| Terminal C prints `TIMED OUT, starting anyway` | The ROV could not reach 0.5 m in 12 s. The run continues. Note it on the run sheet. Check Terminal B was started with `--depth-mode passthrough` and the battery is not low. |
+| ROV keeps sinking, popping up, or bobbing | Ctrl-C in Terminal B, restart it with `--depth-mode neutral` instead of `--depth-mode passthrough`. The ROV now stays at the surface and every run waits 12 s before driving. Write **surface mode** on the run sheet for every run after this. |
 
 **If you had to stop a run:** that run does not count, but keep its folder. Redo it at
 the end of the same block of 7, adding `b` to the repeat number:
@@ -306,25 +304,33 @@ Then upload the whole `runs/` folder and a photo of the run sheet to Box:
 ```
 Date: ____________   Operator: ____________
 
-Surface reading: ______   DEPTH used: ______
-(Redo after battery swap: surface reading ______   DEPTH ______)
+Water depth, floor to surface, middle of the pool: ______ (simulator: 1.05 m)
 
-Run name         | Battery V | Done? | Notes
------------------+-----------+-------+------------------------------
-ilos rect 1      |           |       |
-los rect 1       |           |       |
-fuzzy_lab rect 1 |           |       |
-...              |           |       |
+Run name         | Battery V | at depth after | Done? | Notes
+-----------------+-----------+----------------+-------+-----------------------
+ilos rect 1      |           |                |       |
+los rect 1       |           |                |       |
+fuzzy_lab rect 1 |           |                |       |
+...              |           |                |       |
 ```
 
 ---
 
 ## Notes for whoever maintains this
 
-- The ROV holds depth with the autopilot's `rel_alt` reading, whose zero is set at boot,
-  not at the surface (in the tub it read -0.093 m while floating). The simulator
-  predictions were made at 0.5 m, so `DEPTH` = surface reading minus 0.5.
-  `run_one.sh` defaults to -0.5 if `DEPTH` is not set.
+- Depth: the lab's `dead_reckon` node zeroes depth at `/deadreckon/reset`
+  (`pos[2] = baro_depth - baro_depth_at_reset`), and `run_one.sh` sends that reset
+  right before each run, so the controller's depth is metres below the FLOATING
+  position and `DEPTH=-0.5` (the default) is 0.5 m below it. The autopilot's own
+  depth zero is irrelevant. `--dive-first` makes the runner refuse unless depth reads
+  within 0.10 m of zero at start, sink with zero surge/yaw until the sensor is within
+  0.05 m of the target for 1.0 s (12 s timeout, flagged), then lay out the course.
+  Tested offline: `python3 test_depth_gate.py`.
+- Simulator comparison: the sim starts each run at depth with no reset; its depth
+  sensor sits 0.50 m below the surface. The real sensor floats about 6 cm below the
+  surface, so after a 0.5 m dive it sits about 0.56 m down: a 6 cm difference,
+  recorded in `depth_gate.json`, negligible for the dynamics at that depth. The sim
+  does NOT use `--dive-first` (its predictions are unchanged by this feature).
 - The run order was generated with a fixed seed (Python `random.Random(20261103)`), as
   the pre-registration requires a randomized order.
 - Position drifts a few percent of distance travelled. The safety box uses the estimated
@@ -341,5 +347,6 @@ fuzzy_lab rect 1 |           |       |
 | `course_runner.py` | Runs one controller |
 | `cmdvel_to_manual.py` | Turns controller output into stick commands; arm, stop, nudge |
 | `run_one.sh` | One recorded run |
+| `test_depth_gate.py` | Offline test of the dive-then-start logic |
 | `score_runs.py` | Scores finished runs |
 | `llm_pilot.py` | Optional camera pilot (see `LLM_PILOT.md`) |
