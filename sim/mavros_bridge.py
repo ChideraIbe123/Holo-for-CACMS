@@ -648,8 +648,16 @@ class MavrosBridge:
         # v16: /dvl/altitude — WaterLinked bottom distance, sent in the same
         # JSON message as the twist on the real vehicle (same rate). Flat floor.
         if self._last_z is not None:
+            # v19: the A50 reports the height of ITS face above the floor. It sits 11 cm
+            # below and 17 cm aft of the centre (DVL_LEVER_ARM_FLU), so the nose-down trim
+            # raises it ~4 cm; the depth sensor is 6 cm above the centre. Before v19 the
+            # altitude was taken at the depth sensor: ~0.17 m too high while floating,
+            # enough to keep course_runner's floor guard from engaging in the twin when it
+            # does on the vehicle. Flat floor; the 2 % beam-tilt effect (cos 12 deg) is ignored.
+            rot_m = quat_to_rot_matrix_xyzw(self.last_quat_xyzw)   # body -> world
+            z_dvl = (self._last_z - DEPTH_SOCKET_OFFSET) + (rot_m @ DVL_LEVER_ARM_FLU)[2]
             alt = Float32()
-            alt.data = float(max(0.0, POOL_FLOOR_DEPTH + (self._last_z - WATER_SURFACE_Z)))
+            alt.data = float(max(0.0, POOL_FLOOR_DEPTH + (z_dvl - WATER_SURFACE_Z)))
             self.dvl_alt_pub.publish(alt)
 
     def on_depth(self, depth_data):
