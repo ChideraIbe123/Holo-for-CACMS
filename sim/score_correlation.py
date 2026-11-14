@@ -253,7 +253,6 @@ def report(stats_sim, stats_real, label_a="sim", label_b="real", pooled_extra=No
             print(f"   {a_} vs {b_}: {'agree' if ok else 'DISAGREE'}")
     else:
         print("\nPAIRWISE (primary): no pairs separable above noise on both sides")
-    return sep_pairs
     lo, med, hi = noise_floor_band(stats_sim, stats_real, names)
 
     print(f"\nSpearman rho = {rho:+.3f}   Pearson r = {pr:+.3f}   "
