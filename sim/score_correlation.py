@@ -162,8 +162,28 @@ def load_traj(d, csvs):
     return None, None
 
 
+def run_rmse(d, csvs):
+    """Cross-track RMSE of one run, or None.
+
+    course_runner logs its own signed cross-track error `e` against the ACTIVE
+    segment of whichever course it ran (rect or line), in the course frame; the
+    frozen predictions (Amendments 4 and 6) were computed from that column. Use it
+    when present. Only legacy recordings without it (sim_gt.csv, the pre-pilot-kit
+    benchmark) fall back to score_ranking's rectangle geometry, which is wrong for
+    the line course (2026-11-14 finding: every line-course point sits 0.3 m from
+    the rectangle's edges)."""
+    for fname in csvs:
+        f = os.path.join(d, fname)
+        if fname != "sim_gt.csv" and os.path.exists(f):
+            a = np.genfromtxt(f, delimiter=",", names=True)
+            if a.size >= 50 and a.dtype.names and "e" in a.dtype.names:
+                return float(np.sqrt(np.mean(a["e"] ** 2)))
+    t, xy = load_traj(d, csvs)
+    return None if xy is None else metrics(t, xy)["rmse"]
+
+
 def load_side(root, run_filter=None, csvs=DEFAULT_CSVS):
-    """-> {controller: (rmse_mean, rmse_sd, n_runs)} using score_ranking metrics."""
+    """-> {controller: (rmse_mean, rmse_sd, n_runs)}; see run_rmse for the metric."""
     per = {}
     for d in sorted(glob.glob(os.path.join(root, "*_s*"))):
         if not os.path.isdir(d):
@@ -172,10 +192,10 @@ def load_side(root, run_filter=None, csvs=DEFAULT_CSVS):
         name, run = base.rsplit("_s", 1)
         if run_filter is not None and run != run_filter:
             continue
-        t, xy = load_traj(d, csvs)
-        if xy is None:
+        r = run_rmse(d, csvs)
+        if r is None:
             continue
-        per.setdefault(name, []).append(metrics(t, xy)["rmse"])
+        per.setdefault(name, []).append(r)
     return {n: (float(np.mean(v)), float(np.std(v)), len(v)) for n, v in per.items()}
 
 
