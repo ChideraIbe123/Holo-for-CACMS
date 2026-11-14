@@ -277,3 +277,11 @@ intervention voided and rerun; both rosbags and live `sim_dr.csv` recorded.
   stray early `return` left in `report()` by the Amendment-3 edit ended the report
   after the pairwise block, so the Spearman/Pearson/Kendall/MMRV lines and the
   noise-band verdict never printed (`cdaa0b1`). No statistic or threshold changes.
+  (result, 2026-11-14) Sensitivity set `pred_v19_d074` (56 runs, all start-ups
+  settled): with 0.74 m of water the twin's floating DVL altitude is 0.586 m (real
+  0.583), its guard caps the depth target to -0.285 m (real -0.280) and the course
+  runs at -0.32 m (real -0.33), i.e. the real protocol is reproduced. Predicted RMSEs
+  move by 1-4 mm; Spearman between the frozen (c) orders and the sensitivity orders is
+  +0.964 on both courses, the only differences being one near-tie pair per course
+  (rect los/smc, 1.3 mm; line alos/los, 0.7 mm). The frozen (c) predictions remain
+  binding; the depth difference is reported as a sensitivity, not corrected.
