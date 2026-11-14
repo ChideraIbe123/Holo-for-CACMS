@@ -254,3 +254,22 @@ intervention voided and rerun; both rosbags and live `sim_dr.csv` recorded.
   4 configuration (`--venue tub --rel-alt-bias -0.0326 --accel-lp 1.25`, 4 seeds,
   `scorecard_v19tub*.json`): **41/41 in every seed and pooled** (secondary MWU
   40/40/41/41), identical to the v18 result. Context only, not a hypothesis.
+- **2026-11-14 — Amendment 6b: depth clause exercised as a sensitivity set; analysis
+  tool corrected.** The line-course confirmatory session took place on 2026-11-13
+  (7 laws x 4 repeats, Box folder "2026-11-13 Swimming tub test - LINE"); the
+  rectangle session has not. The `start_gate.json` records show the real floating
+  DVL altitude was 0.58 m (0.51-0.75) against the twin's 0.81 m, so the floor guard
+  capped the real depth target to 0.28 m (0.21-0.40) instead of 0.50 m, and the
+  heading error at course start was +4 to +8 deg (twin: ~0). Because line data now
+  exists, the re-run foreseen in Amendment 6(b) CANNOT replace the frozen line
+  predictions. It is run instead as a pre-specified SENSITIVITY set for both courses
+  (campaign `pred_v19_d074`, water depth 0.74 m so the twin's floating altitude
+  matches 0.58 m and its guard caps the same way; launched 2026-11-14 before any
+  pooled statistic was computed) and will be reported beside the Amendment-6(c)
+  predictions, which remain the binding ones for BOTH courses. ANALYSIS TOOL: the
+  pre-registered scorer measured every run against the rectangle geometry, which is
+  wrong for the line course; it now uses the runner's own cross-track column `e`
+  (the quantity the frozen predictions were computed from) when present. No
+  statistic or threshold changes. The fix (`score_correlation.py`, this date) was
+  made and pushed before any pooled or rectangle statistic was computed; a line-only
+  preliminary was computed immediately after and is logged in the work log, not here.
