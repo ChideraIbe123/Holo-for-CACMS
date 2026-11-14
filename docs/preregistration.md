@@ -273,3 +273,7 @@ intervention voided and rerun; both rosbags and live `sim_dr.csv` recorded.
   statistic or threshold changes. The fix (`score_correlation.py`, this date) was
   made and pushed before any pooled or rectangle statistic was computed; a line-only
   preliminary was computed immediately after and is logged in the work log, not here.
+  (addendum, same date) A second tool defect was found and fixed on the same run: a
+  stray early `return` left in `report()` by the Amendment-3 edit ended the report
+  after the pairwise block, so the Spearman/Pearson/Kendall/MMRV lines and the
+  noise-band verdict never printed (`cdaa0b1`). No statistic or threshold changes.
