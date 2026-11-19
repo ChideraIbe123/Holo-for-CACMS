@@ -37,6 +37,16 @@ save_heading.py into heading_ref.json);
 that position with its x axis exactly on the saved heading, and tells the stick
 converter to re-anchor its geofence there. If it cannot settle within --init-timeout s
 it does NOT start (exit code 3). Writes start_gate.json and init.csv next to the log.
+
+--heading placed (with --init, 2026-11-19): the course heading is the heading the vehicle
+was PLACED at (the estimator's heading averaged while it floats on the mark, before the
+start-up begins) instead of the saved one. The start-up then only holds that heading
+while it sinks; there is no turn. Reason: in the 2026-11-13 line session the autopilot's
+heading for the same hand placement wandered over 60 deg between runs (the vehicle
+turned 10-71 deg left before every run, 27 deg on average), so the saved compass
+heading did not point down the pool from one run to the next. With --heading placed the
+operator aims the vehicle along the pool and the compass drift cancels. --heading saved
+(default) is the 2026-11-12 behaviour.
 """
 import argparse
 import json
@@ -175,6 +185,9 @@ class StartGate:
                  yaw_izone=math.radians(10.0), yaw_kd=0.6, yaw_min=0.5,
                  min_alt=0.30, guard_alt=0.20, floor_up=0.10):
         self.depth, self.heading = depth, heading
+        # heading None = 'placed': the target is the heading at the first feed (or the
+        # circular mean seeded by seed_heading() while floating); no turn, just hold it
+        self.heading_mode = 'saved' if heading is not None else 'placed'
         self.depth_requested = depth
         self.min_alt, self.guard_alt, self.floor_up, self.z_izone = min_alt, guard_alt, floor_up, z_izone
         self.alt_start = None
@@ -210,6 +223,12 @@ class StartGate:
         if self.floor and not self.floor_locked:
             self._lock_target()
 
+    def seed_heading(self, yaws):
+        """Headings (rad) read while floating on the mark, before feed(): in 'placed' mode
+        their circular mean becomes the course heading."""
+        if self.heading is None and yaws:
+            self.heading = math.atan2(sum(math.sin(y) for y in yaws), sum(math.cos(y) for y in yaws))
+
     def feed(self, t, z, yaw, alt=None, vz=None, yaw_rate=None):
         """alt: DVL height above the floor (m) or None; vz: vertical speed (m/s, UP +, from
         the depth sensor; the DVL's vertical velocity in /deadreckon/odom reads + going DOWN)
@@ -220,6 +239,8 @@ class StartGate:
             return self.phase, 0.0, 0.0
         if self.phase == 'check':
             self.t_start, self.z_start, self.yaw_start = t, z, yaw
+            if self.heading is None:
+                self.heading = yaw
             if abs(z) > self.start_tol:
                 self.phase = 'abort'
                 self.reason = (f'depth reads {z:+.2f} m at start (limit +/-{self.start_tol:.2f}). '
@@ -334,7 +355,7 @@ class StartGate:
                  floor_depth=(self._floor_med() if self.floor else None), floor_locked=self.floor_locked,
                  target_raised_by_guard=self.target_raised,
                  floor_samples_rejected=self.floor_rejected,
-                 heading_target_deg=deg(self.heading),
+                 heading_target_deg=deg(self.heading), heading_mode=self.heading_mode,
                  depth_tol=self.depth_tol, heading_tol_deg=deg(self.heading_tol), hold_s=self.hold,
                  z_at_start=self.z_start, heading_at_start_deg=deg(self.yaw_start),
                  settle_s=self.settle_s, settled=self.phase == 'course',
@@ -372,6 +393,7 @@ class Runner:
         self.alt_time = -1e9
         self.alt_wait_start = None
         self.alt_seed = []          # (z, alt) while floating, before the start-up begins
+        self.yaw_seed = []          # headings while floating: the course heading in 'placed' mode
         self.yaw_rate, self.yaw_rate_time = None, -1e9
         self.z_hist = []            # (t, z) for the vertical speed
         self.placement = None
@@ -383,7 +405,8 @@ class Runner:
                 raise SystemExit('--init needs --depth-target')
             if a.dive_first:
                 raise SystemExit('use --init or --dive-first, not both')
-            self.init = StartGate(a.depth_target, load_heading(a.heading_ref, a.course),
+            heading = load_heading(a.heading_ref, a.course) if a.heading == 'saved' else None
+            self.init = StartGate(a.depth_target, heading,
                                   start_tol=a.start_tol, depth_tol=a.settle_tol,
                                   heading_tol=math.radians(a.heading_tol), hold=a.init_hold,
                                   timeout=a.init_timeout, min_alt=a.min_altitude)
@@ -477,10 +500,12 @@ class Runner:
                 alt = self.fresh_alt()
                 if alt is not None:
                     self.alt_seed.append((p.z, alt))
+                self.yaw_seed.append(yaw)
                 if len(self.alt_seed) < 5 and t - self.alt_wait_start < 3.0:
                     self.publish(0.0, 0.0, 0.0)
                     return
                 self.init.seed_floor(self.alt_seed)
+                self.init.seed_heading(self.yaw_seed)
             first = self.init.phase == 'check'
             if first:
                 self.placement = (p.x, p.y)     # where the operator put it: on the start mark
@@ -526,7 +551,8 @@ class Runner:
                 f'{math.degrees(wrap(g.heading - g.yaw_course_start)):+.1f} deg, dvl altitude '
                 f'{self.alt if self.alt is not None else float("nan"):.2f} m; drifted {g.anchor["drift_along"]:+.2f} m '
                 f'along / {g.anchor["drift_side"]:+.2f} m sideways from the mark; course laid out from the '
-                f'{"mark" if self.a.anchor == "placement" else "settled position"}. Course starts.')
+                f'{"mark" if self.a.anchor == "placement" else "settled position"} along the '
+                f'{g.heading_mode} heading ({math.degrees(g.heading):+.1f} deg). Course starts.')
         if self.gate is not None and self.gate.phase != 'course':
             phase, w = self.gate.feed(t, p.z)
             if phase == 'abort':
@@ -624,6 +650,10 @@ def main():
     ap.add_argument('--heading-ref', default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                                           'heading_ref.json'),
                     help='init: file written by save_heading.py (default: heading_ref.json next to this script)')
+    ap.add_argument('--heading', choices=['saved', 'placed'], default='saved',
+                    help='init: course heading = the saved heading (turn to it, default) or the heading the '
+                         'vehicle was placed at (no turn: aim it along the pool by hand; immune to compass '
+                         'drift between runs, see the module docstring)')
     # 6 deg / 1.0 s (was 3 deg / 1.5 s): on 2026-11-12 depth settled to +/-1 cm but a steady
     # push held the heading at +2..+6 deg (mean +3.7) for 30 s, so a 3 deg window never held.
     # The course axis is the saved heading exactly either way; the law removes the residual.
@@ -638,7 +668,7 @@ def main():
                     help='init: carry the start-up depth integrator into the course (default: plain P depth law)')
     ap.add_argument('--anchor', choices=['placement', 'settled'], default='placement',
                     help='init: lay the course out from the start mark (placement, default) or from where '
-                         'the start-up settled; the course heading is the saved heading either way')
+                         'the start-up settled; the course heading is set by --heading either way')
     ap.add_argument('--max-rate', type=float, default=0.0,
                     help='diagnostic: cap the control loop at this rate (Hz) by '
                          'dropping odom messages; 0 (default) = act on every message. '
@@ -651,7 +681,7 @@ def main():
     r = Runner(node, a)
     node.create_timer(0.05, r.tick)
     node.get_logger().info(f'{a.name or a.law}: law={a.law} course={a.course} cruise={a.cruise} laps={a.laps} '
-                           f'depth={a.depth_target} dive_first={a.dive_first} init={a.init}')
+                           f'depth={a.depth_target} dive_first={a.dive_first} init={a.init} heading={a.heading}')
     code = 0
     try:
         rclpy.spin(node)

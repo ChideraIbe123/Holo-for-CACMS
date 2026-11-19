@@ -34,7 +34,8 @@ if [ "${INIT:-0}" = "1" ]; then
   sleep 6                                     # let the float settle before the estimator is zeroed there
   ros2 topic pub /deadreckon/reset std_msgs/msg/Empty "{}" -1 > /dev/null 2>&1
   printf '{"heading": {"yaw_rad": 0.0, "yaw_deg": 0.0, "note": "sim spawn heading"}}' > $D/heading_ref.json
-  RUNNER_ARGS="--init --heading-ref $D/heading_ref.json $RUNNER_ARGS"
+  # HEADING=placed|saved as on the vehicle; identical here (spawn heading = saved heading = 0)
+  RUNNER_ARGS="--init --heading ${HEADING:-saved} --heading-ref $D/heading_ref.json $RUNNER_ARGS"
 fi
 $PY $HERE/course_runner.py --law $LAW --course $COURSE --name $TAG --depth-target -0.5 --cmd-topic $TOPIC --log $D/runner.csv $RUNNER_ARGS > $D/runner.log 2>&1
 sleep 2

@@ -110,5 +110,27 @@ ok &= check('course x axis is the saved heading, not the residual error',
 x, y, _ = trk.to_course(3.0 + math.cos(REF), -1.0 + math.sin(REF), REF)
 ok &= check('1 m along the saved heading is course x = +1 m', abs(x - 1.0) < 1e-9 and abs(y) < 1e-9)
 
+# 9. --heading placed: the course heading is where the vehicle was put; it holds that
+#    heading while sinking and never turns (2026-11-13: the saved compass heading drifted
+#    10-71 deg between runs, so every run began with a left turn).
+yaw0 = math.radians(-100.0)
+g = StartGate(-0.5, None)
+phase, t_c, yaw_end = run_vehicle(g, yaw0=yaw0)
+s = g.summary()
+ok &= check(f'placed mode: target is the placement heading ({math.degrees(g.heading):+.1f} deg)',
+            s['heading_mode'] == 'placed' and abs(wrap(g.heading - yaw0)) < math.radians(1.0))
+ok &= check(f'placed mode: settles and starts ({s["settle_s"]:.1f} s)', phase == 'course' and s['settled'])
+ok &= check(f'placed mode: no turn (ends {math.degrees(wrap(yaw_end - yaw0)):+.1f} deg from placement, '
+            f'peak yaw command {max(abs(r[5]) for r in g.trace):.2f} rad/s)',
+            abs(wrap(yaw_end - yaw0)) < math.radians(6.0) and max(abs(r[5]) for r in g.trace) < 0.3)
+
+# 10. Placed mode seeded while floating: circular mean across +/-180, not overwritten by feed().
+g = StartGate(-0.5, None)
+g.seed_heading([math.radians(178.0), math.radians(-178.0)])
+g.feed(0.0, 0.0, math.radians(-170.0))
+ok &= check(f'placed mode: seeded heading is the circular mean ({math.degrees(g.heading):+.1f} deg) and feed() keeps it',
+            abs(wrap(g.heading - math.pi)) < 1e-6)
+ok &= check('saved mode is unchanged', StartGate(-0.5, REF).heading_mode == 'saved')
+
 print('\nALL CHECKS PASS' if ok else '\nSOME CHECKS FAILED')
 sys.exit(0 if ok else 1)

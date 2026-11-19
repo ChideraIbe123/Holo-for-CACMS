@@ -285,3 +285,25 @@ intervention voided and rerun; both rosbags and live `sim_dr.csv` recorded.
   +0.964 on both courses, the only differences being one near-tie pair per course
   (rect los/smc, 1.3 mm; line alos/los, 0.7 mm). The frozen (c) predictions remain
   binding; the depth difference is reported as a sensitivity, not corrected.
+
+- **Amendment 7 (2026-11-19, before any rectangle data): course heading taken from the
+  operator's placement, not the saved compass heading.** PROTOCOL ONLY; no change to
+  the twin, the controllers, the courses, the statistic, the thresholds or the frozen
+  Amendment-6(c) predictions. Evidence from the 28 line-session `start_gate.json`
+  records (2026-11-13): against one saved target (-70.4 deg) the autopilot heading
+  read at placement ranged from -81 to -142 deg for the same hand placement, so the
+  start-up turned the vehicle 10 to 71 deg (mean 27 deg) before every run and the
+  runs set off at different physical angles across the pool. The course start heading
+  error was also +4 to +8 deg on every run (the yaw loop halts just inside its 6 deg
+  tolerance when it arrives from one side). On the 2.0 x 0.6 m rectangle a 27 deg
+  rotation moves the far corners ~0.9 m sideways, beyond the wall clearance, so this
+  is a safety and validity fix for the rectangle session. CHANGE: `course_runner.py
+  --heading placed` (default in `run_one.sh` from this date) takes the course heading
+  as the estimator heading averaged while the vehicle floats on the mark; the start-up
+  holds it while sinking and does not turn. The operator aims the vehicle along the
+  pool by sighting the long wall (2-3 deg of aim error moves the far end of the course
+  under 0.1 m). `--heading saved` keeps the 2026-11-13 behaviour; `start_gate.json`
+  records `heading_mode`. The simulator start-up is unaffected (it spawns on the course
+  heading, so placed and saved coincide there and the predictions are unchanged; the
+  line session ran with `saved`, and its data is used as collected). Offline test
+  `test_start_gate.py` 19/19.

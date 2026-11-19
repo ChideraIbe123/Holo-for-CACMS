@@ -3,7 +3,7 @@
 A checklist for running the controller test on the BlueROV2 from the topside laptop.
 Do the steps in order. Every command can be copied and pasted.
 
-**What happens:** the ROV sinks, turns to face the back wall, drives a short course by
+**What happens:** the ROV sinks, holding the direction you aimed it, drives a short course by
 itself, then stops. You do this
 42 times: 7 controllers, 2 courses, 3 times each. It takes about 2 hours in the water.
 
@@ -124,22 +124,24 @@ Do not continue.
 
 ---
 
-## Step 5. Save the course heading (once per session)
+## Step 5. Aim the ROV yourself (every run)
 
-Every run starts by turning the ROV to the same heading, so all runs face the same way
-regardless of how it was placed. Save that heading once, before the first run:
+The course goes in the direction the ROV is **pointing when you let go of it**. The
+start-up holds that heading while it sinks; it does not turn. So before every run:
 
-1. Put the ROV on the rectangle start mark, floating, **nose pointing at the back wall**
-   (the direction the first leg of the course goes). Hold it still.
-2. In Terminal C:
-   ```bash
-   python3 save_heading.py
-   ```
-   It prints `saved heading ... deg`. If it says the heading moved while sampling,
-   hold the ROV steadier and run it again.
+1. Put the ROV on the start mark, floating, nose pointing **straight down the long side
+   of the pool**. Sight along the long wall to get it parallel. Two or three degrees
+   off is fine.
+2. Let go and keep your hands off it until it starts driving.
 
-Redo this only if you move the start mark or the pool layout changes. The same heading
-is used for the line runs, so lay the line course out along the same direction.
+Why not the compass: on the line day (2026-11-13) the ROV's compass heading for the
+same placement wandered by up to 60 degrees between runs, so turning to a saved
+compass heading sent the runs off at different angles (that is the left turn you saw
+at the start of every run). A rectangle set off by 27 degrees would swing its far
+corners 0.9 m sideways, into the wall. Your eyes along the wall are more reliable.
+
+`save_heading.py` is no longer needed. (The old behaviour is still there if ever
+wanted: put `HEADING=saved` in front of a run command.)
 
 ### What a run does before it drives (read once)
 
@@ -149,11 +151,11 @@ is used for the line runs, so lay the line course out along the same direction.
 2. It reads the DVL's height above the floor and picks the depth: 0.5 m, or less if that
    would leave under 0.30 m of water beneath the DVL (in a 38 in pool that is about
    0.35 to 0.45 m). Terminal C prints the depth it chose.
-3. It sinks and turns on the spot to the saved heading, with no forward motion, and
-   waits until depth (within 5 cm) and heading (within 6 degrees) have both held for a
+3. It sinks with no forward motion, holding the heading you placed it at, and waits
+   until depth (within 5 cm) and heading (within 6 degrees) have both held for a
    second. Terminal C prints `initialised after N s ... Course starts.`
-4. The course is laid out from where you placed the ROV, pointing along the saved
-   heading. Then it drives.
+4. The course is laid out from where you placed the ROV, pointing the way you aimed
+   it. Then it drives.
 
 If it cannot settle within 45 s it does **not** drive: Terminal C prints `NOT STARTING`,
 the run folder is renamed `..._ABORTED_<time>`, and you simply run the same command
@@ -164,8 +166,9 @@ during the run) and `init.csv` (the start-up trace).
 
 ## Step 6. Do one run
 
-1. Put the ROV on the start mark, facing the right way (see "The two courses").
-   The ROV lays out the course from wherever it starts, so the start position matters.
+1. Put the ROV on the start mark, nose straight down the long side of the pool (see
+   Step 5 and "The two courses"). The ROV lays out the course from where it starts and
+   in the direction it points, so both matter.
 2. Terminal B: press `c`, then `a` (arm).
 3. Terminal C: type the run command, for example:
    ```bash
@@ -188,8 +191,12 @@ Then do the next run on the list.
 ## The two courses
 
 **Rectangle (`rect`).** Empty pool. Start 1.0 m from a short wall and 0.7 m from the
-long wall on the ROV's **right**, nose pointing down the long side. The ROV drives a
-2.0 m by 0.6 m rectangle twice (about 45 seconds).
+long wall on the ROV's **right**, nose pointing straight down the long side (sight
+along the wall). The ROV drives a 2.0 m by 0.6 m rectangle twice (about 45 seconds):
+2.0 m ahead, 0.6 m to its left. With the nose straight, the nearest it should come to
+any wall is about 0.2 m (fuzzy, on the left side); the safety box stops it 0.3 m
+before every wall. Expect fuzzy to trip the box on some runs: that is a recorded
+result, not a fault. Do not move the mark to give it more room.
 
 **Line (`line`).** Pipe in the middle of the pool. Start level with one end of the pipe,
 0.3 m to its **right**, nose parallel to the pipe. The ROV moves onto the pipe and
@@ -294,7 +301,8 @@ If time is short, finish all 42 before doing any extras.
 | ROV heads for a wall and nothing stops it | Press **SPACE**. Note it on the run sheet. |
 | Terminal C prints `NOT STARTING: depth reads ...` | The ROV was not floating freely when you pressed Enter. Let it float up, wait 5 s, run the same command again. |
 | Terminal C prints `NOT STARTING: not settled after 45 s` | It could not hold depth and heading together. The folder is renamed `_ABORTED`; run the same command again. If it happens twice in a row: check Terminal B is in `--depth-mode passthrough`, the battery is above 15 V, and the tether is slack. |
-| Terminal C prints `no saved heading` | Step 5 was skipped. Run `python3 save_heading.py` with the ROV facing the back wall. |
+| Terminal C prints `no saved heading` | Only happens with `HEADING=saved`. Drop that from the command (the default uses the heading you placed it at), or run `python3 save_heading.py` first. |
+| The ROV turns before it drives | Only normal with `HEADING=saved`. By default it must not turn: check the run command and that Terminal C printed `heading=placed`. |
 | Terminal C warns `depth target reduced` | Normal in a shallow pool: it keeps 0.30 m of water under the DVL. Note the depth on the run sheet. |
 | ROV keeps sinking, popping up, or bobbing | Ctrl-C in Terminal B, restart it with `--depth-mode neutral` instead of `--depth-mode passthrough`. The ROV now stays at the surface. Runs will NOT start on their own in this mode (the start-up needs depth); only use it to recover the ROV. |
 
@@ -327,7 +335,7 @@ Date: ____________   Operator: ____________
 
 Water depth, floor to surface, middle of the pool: ______ (simulator: 1.05 m)
 
-Saved heading (deg): ______
+Heading: placed by hand (default) / saved compass heading ______ (circle one)
 
 Run name         | Battery V | initialised after | Done? | Notes
 -----------------+-----------+-------------------+-------+--------------------
@@ -347,12 +355,22 @@ fuzzy_lab rect 1 |           |                   |       |
   the vehicle floats, so depth is metres below the floating position. The runner refuses
   unless depth reads within 0.10 m of zero, locks the depth target from five floating
   DVL altitudes (requested 0.5 m, capped to keep 0.30 m under the DVL), then sinks and
-  turns to the saved heading with PI loops (depth damped by the depth-sensor rate, yaw
+  holds the course heading with PI loops (depth damped by the depth-sensor rate, yaw
   by the gyro, 0.5 rad/s minimum yaw outside tolerance because smaller sticks sit in
   the thruster dead band), and starts only when depth (0.05 m) and heading (6 deg) hold
   for 1.0 s; 45 s timeout aborts (exit 3). The course is anchored at the placement
-  point along the saved heading; the stick converter re-anchors its geofence there.
+  point; the stick converter re-anchors its geofence there.
   Offline tests: `python3 test_start_gate.py`.
+- Course heading (`--heading`, 2026-11-19): `placed` (default in `run_one.sh`) uses the
+  estimator heading averaged while the vehicle floats on the mark, so there is no turn
+  and the operator's aim defines the course. `saved` turns to `heading_ref.json`
+  (`save_heading.py`), the 2026-11-13 line-session behaviour. Why: the 28 line-session
+  `start_gate.json` files show `heading_at_start_deg` from -81 to -142 for the same
+  hand placement against a fixed target of -70.4, i.e. the autopilot heading wandered
+  about 60 deg between runs and the vehicle turned 10-71 deg before every run. The
+  course start heading error was also +4 to +8 deg on every run (the yaw loop stops
+  just inside its tolerance when arriving from one side); `placed` starts at ~0.
+  `start_gate.json` records `heading_mode`.
 - Simulator comparison: the same start-up runs in the twin (`sim_run.sh INIT=1`:
   surface spawn, reset at the float point, `--init` with heading 0, 0.965 m water), so
   the predictions include the floor-guarded depth. The twin's vehicle model carries the
@@ -373,7 +391,7 @@ fuzzy_lab rect 1 |           |                   |       |
 | `course_runner.py` | Runs one controller |
 | `cmdvel_to_manual.py` | Turns controller output into stick commands; arm, stop, nudge |
 | `run_one.sh` | One recorded run |
-| `save_heading.py` | Saves the course heading the start-up turns to |
+| `save_heading.py` | Saves a compass heading for `HEADING=saved` runs (not used by default) |
 | `test_start_gate.py` | Offline test of the start-up (sink + turn) logic |
 | `test_depth_gate.py` | Offline test of the older dive-only start (`--dive-first`) |
 | `score_runs.py` | Scores finished runs |
