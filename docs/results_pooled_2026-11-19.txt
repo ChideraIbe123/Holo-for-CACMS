@@ -1,0 +1,109 @@
+################ REAL RECT VIEW = real_1119_rect_view_complete
+[course 2] 6 separable pairs pooled into the primary statistic
+
+controller        sim RMSE      ± rank   real RMSE      ± rank
+pursuit              0.112  0.002    1       0.088  0.002    2
+los                  0.116  0.003    2       0.091  0.003    5
+smc                  0.116  0.002    3       0.088  0.001    1
+alos                 0.116  0.002    4       0.089  0.002    3
+p                    0.122  0.001    5       0.113  0.029    6
+ilos                 0.133  0.003    6       0.091  0.001    4
+fuzzy_lab            0.166  0.001    7       0.120  0.005    7
+
+PAIRWISE (primary): 12/12 separable pairs correctly ordered (binomial p = 0.0002 vs chance)
+   alos vs fuzzy_lab: agree
+   fuzzy_lab vs ilos: agree
+   fuzzy_lab vs los: agree
+   fuzzy_lab vs pursuit: agree
+   fuzzy_lab vs smc: agree
+   ilos vs smc: agree
+   alos [c2] vs fuzzy_lab [c2]: agree
+   alos [c2] vs p [c2]: agree
+   alos [c2] vs smc [c2]: agree
+   fuzzy_lab [c2] vs ilos [c2]: agree
+   ilos [c2] vs p [c2]: agree
+   ilos [c2] vs smc [c2]: agree
+
+Spearman rho = +0.643   Pearson r = +0.766   Kendall tau = +0.524   MMRV = 0.0075 (metric units; 0 = orderings agree)   (n = 7 controllers)
+chance test: exact P(random ranking correlates >= observed) = 0.0694 -> not distinguishable from chance
+noise floor: rho under perfect-agreement + measured run spreads = [+0.214 .. +0.964] (median +0.786, 5-95%)
+verdict: observed correlation is INSIDE the noise band -> sim ordering consistent with real within run-to-run noise
+
+################ REAL RECT VIEW = real_1119_rect_view
+[course 2] 6 separable pairs pooled into the primary statistic
+
+controller        sim RMSE      ± rank   real RMSE      ± rank
+pursuit              0.112  0.002    1       0.088  0.002    1
+los                  0.116  0.003    2       0.091  0.003    4
+smc                  0.116  0.002    3       0.137  0.085    5
+alos                 0.116  0.002    4       0.089  0.002    2
+p                    0.122  0.001    5       0.164  0.092    6
+ilos                 0.133  0.003    6       0.091  0.001    3
+fuzzy_lab            0.166  0.001    7       0.177  0.099    7
+
+PAIRWISE (primary): 6/6 separable pairs correctly ordered (binomial p = 0.0156 vs chance)
+   alos [c2] vs fuzzy_lab [c2]: agree
+   alos [c2] vs p [c2]: agree
+   alos [c2] vs smc [c2]: agree
+   fuzzy_lab [c2] vs ilos [c2]: agree
+   ilos [c2] vs p [c2]: agree
+   ilos [c2] vs smc [c2]: agree
+
+Spearman rho = +0.607   Pearson r = +0.627   Kendall tau = +0.524   MMRV = 0.0347 (metric units; 0 = orderings agree)   (n = 7 controllers)
+chance test: exact P(random ranking correlates >= observed) = 0.0833 -> not distinguishable from chance
+noise floor: rho under perfect-agreement + measured run spreads = [-0.321 .. +0.964] (median +0.464, 5-95%)
+verdict: observed correlation is INSIDE the noise band -> sim ordering consistent with real within run-to-run noise
+
+################ REAL RECT VIEW = real_1119_rect_view_totrip
+[course 2] 6 separable pairs pooled into the primary statistic
+
+controller        sim RMSE      ± rank   real RMSE      ± rank
+pursuit              0.112  0.002    1       0.088  0.002    1
+los                  0.116  0.003    2       0.091  0.003    4
+smc                  0.116  0.002    3       0.097  0.015    5
+alos                 0.116  0.002    4       0.089  0.002    2
+p                    0.122  0.001    5       0.115  0.025    6
+ilos                 0.133  0.003    6       0.091  0.001    3
+fuzzy_lab            0.166  0.001    7       0.123  0.007    7
+
+PAIRWISE (primary): 11/11 separable pairs correctly ordered (binomial p = 0.0005 vs chance)
+   alos vs fuzzy_lab: agree
+   fuzzy_lab vs ilos: agree
+   fuzzy_lab vs los: agree
+   fuzzy_lab vs pursuit: agree
+   fuzzy_lab vs smc: agree
+   alos [c2] vs fuzzy_lab [c2]: agree
+   alos [c2] vs p [c2]: agree
+   alos [c2] vs smc [c2]: agree
+   fuzzy_lab [c2] vs ilos [c2]: agree
+   ilos [c2] vs p [c2]: agree
+   ilos [c2] vs smc [c2]: agree
+
+Spearman rho = +0.607   Pearson r = +0.753   Kendall tau = +0.524   MMRV = 0.0091 (metric units; 0 = orderings agree)   (n = 7 controllers)
+chance test: exact P(random ranking correlates >= observed) = 0.0833 -> not distinguishable from chance
+noise floor: rho under perfect-agreement + measured run spreads = [+0.214 .. +0.964] (median +0.750, 5-95%)
+verdict: observed correlation is INSIDE the noise band -> sim ordering consistent with real within run-to-run noise
+
+################ RECTANGLE ONLY, completed runs
+
+controller        sim RMSE      ± rank   real RMSE      ± rank
+pursuit              0.112  0.002    1       0.088  0.002    2
+los                  0.116  0.003    2       0.091  0.003    5
+smc                  0.116  0.002    3       0.088  0.001    1
+alos                 0.116  0.002    4       0.089  0.002    3
+p                    0.122  0.001    5       0.113  0.029    6
+ilos                 0.133  0.003    6       0.091  0.001    4
+fuzzy_lab            0.166  0.001    7       0.120  0.005    7
+
+PAIRWISE (primary): 6/6 separable pairs correctly ordered (binomial p = 0.0156 vs chance)
+   alos vs fuzzy_lab: agree
+   fuzzy_lab vs ilos: agree
+   fuzzy_lab vs los: agree
+   fuzzy_lab vs pursuit: agree
+   fuzzy_lab vs smc: agree
+   ilos vs smc: agree
+
+Spearman rho = +0.643   Pearson r = +0.766   Kendall tau = +0.524   MMRV = 0.0075 (metric units; 0 = orderings agree)   (n = 7 controllers)
+chance test: exact P(random ranking correlates >= observed) = 0.0694 -> not distinguishable from chance
+noise floor: rho under perfect-agreement + measured run spreads = [+0.214 .. +0.964] (median +0.786, 5-95%)
+verdict: observed correlation is INSIDE the noise band -> sim ordering consistent with real within run-to-run noise

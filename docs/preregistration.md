@@ -307,3 +307,61 @@ intervention voided and rerun; both rosbags and live `sim_dr.csv` recorded.
   heading, so placed and saved coincide there and the predictions are unchanged; the
   line session ran with `saved`, and its data is used as collected). Offline test
   `test_start_gate.py` 19/19.
+
+- **Result entry (2026-11-19): rectangle confirmatory session and the pre-registered
+  pooled primary statistic.** The rectangle session took place on 2026-11-19, 14:17 to
+  16:40 local (Box folder "2026-11-19 Swimming tub test - RECTANGLE"), 7 laws x 4
+  repeats, every start-up with `--heading placed` (Amendment 7 was pushed at 13:53 the
+  same day, before the first run; all 26 recorded `start_gate.json` files carry
+  `heading_mode: placed`; heading error at course start -7.8 to +7.8 deg, mean -0.2,
+  against +4 to +8 one-sided on 2026-11-13). All start-ups settled (5-14 s).
+  THREE RUNS LEFT THE 1.0 m SAFETY BOX and did not complete the course: fuzzy_lab
+  repeat 3 (tripped at x +1.74, y +1.01 on lap 0; the runner kept logging with the
+  thrusters cut until its 75 s limit), p repeat 2 (x +1.62, y +1.00; stopped by hand at
+  25 s) and smc repeat 4 (x +1.71, y +1.00; stopped by hand at 20 s), all at the same
+  far-left corner. Disclosure: the lab's first attempt at fuzzy_lab repeat 3 (15:02) also
+  tripped (x +2.17, y +1.02) and touched the wall; that folder was deleted on the laptop
+  and the run redone (lab NOTES.txt). Every law still has at least three completed
+  repeats, which is the pre-registered session plan (Amendment 6f).
+  HANDLING OF TRIPPED RUNS WAS NOT PRE-SPECIFIED. The protocol voids runs with pilot
+  intervention; a fence trip is a software cut of the thrusters after which the course
+  is not driven, so the logged cross-track error is not the quantity the frozen
+  predictions describe. Decision, taken after seeing the data and stated as such: the
+  PRIMARY statistic uses the 25 completed rectangle runs (3-4 per law) and the fence
+  trips are reported as the failure-mode outcome (below). Both alternatives are
+  reported alongside: (i) all 28 runs as logged, (ii) the three tripped runs truncated
+  at the first sample with y >= 1.0 m. Views on the lab server:
+  `~/data/real_1119_rect_view_complete`, `_view`, `_view_totrip` (`traj.csv` is the
+  runner log, as for the line session). Exact command (Amendment 3 form):
+  `score_correlation.py ~/data/pred_v19_rect <rect view> --sim2 ~/data/pred_v19_line
+  --real2 ~/data/real_1113_line_view --csv-a traj.csv --csv-b traj.csv`; outputs in
+  `docs/results_pooled_2026-11-19.txt`.
+  REAL RECTANGLE RMSE (m), completed runs, mean over repeats: smc 0.088, pursuit 0.088,
+  alos 0.089, ilos 0.091, los 0.091, p 0.113, fuzzy_lab 0.120. Frozen prediction
+  (Amendment 6c): pursuit 0.112, los 0.116, smc 0.116, alos 0.116, p 0.122, ilos 0.133,
+  fuzzy_lab 0.166.
+  PRIMARY (pooled, completed runs): 12 of 12 separable pairs correctly ordered
+  (6 rectangle + 6 line), one-sided binomial p = 0.0002. Alternative (i): 6/6 (the
+  rectangle contributes no separable pair because the tripped runs inflate three laws'
+  spreads), p = 0.016. Alternative (ii): 11/11, p = 0.0005. H1 SUPPORTED under every
+  handling.
+  SECONDARY, rectangle course: Spearman +0.643 (exact chance p = 0.069, i.e. below the
+  pre-registered n = 7 threshold of 0.679 on this course alone), Pearson +0.766,
+  Kendall +0.524, MMRV 0.0075 m; inside the perfect-agreement noise band
+  [+0.21, +0.96] (median +0.79). Line course (2026-11-14 entry, unchanged): Spearman
+  +0.929, chance p = 0.003. Interpretation per the fixed rule: the rectangle alone is
+  "inside the band but not above chance" because five laws (smc, pursuit, alos, ilos,
+  los) finished within 3 mm of each other in reality where the twin spread them over
+  21 mm; the rank statistic cannot resolve that and the pairwise statistic correctly
+  calls those pairs inseparable. Absolute RMSE: real 20-25 % below the twin on every
+  law except p and fuzzy_lab, consistent with the line session and the shakedown.
+  FAILURE-MODE PREDICTION (Amendments 2 and 6e): "fuzzy_lab is the law most likely to
+  approach the fence; no law breaches it." First half CONFIRMED: fuzzy_lab had the
+  largest lateral excursion among completed runs (max y 0.82-0.94 m; next p 0.97 on
+  one run, otherwise all laws 0.63-0.77) and tripped on both attempts of one repeat.
+  Second half FALSIFIED: p and smc each breached once (1 of 4 repeats), both at the
+  same far-left corner as fuzzy_lab, where the twin predicts max y 0.77-0.80 for them.
+  Amendment 6e pre-stated that a breach indicates a lateral disturbance the twin does
+  not model (tether; fuzzy_lab's ~0.5 N stability cliff, 2026-10-23); the same reading
+  applies to the p and smc breaches and is reported as a twin limitation, not
+  corrected. The twin and the predictions remain frozen.
