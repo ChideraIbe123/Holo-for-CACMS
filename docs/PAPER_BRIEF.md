@@ -215,7 +215,7 @@ worse). Limitation found: swapping channels fools every method (~0.5 AUC).
   low-pass modeling the flight controller's filtered accel reporting: **41/41 in every
   seed**.
 - Honest framing (agreed, please keep): quote the per-seed spread and the tightest
-  margins, never a bare "41/41". Tightest: accel_z.w1 at 0.68 of its margin,
+  margins, never a bare "41/41". Tightest (v19 pooled card, re-read 2026-11-24): dvl_z.acf at 0.89 and accel_z.acf at 0.88 of their margins, worst single seed 0.95; the physics-only card fails accel_x.w1 at 1.34. (Older note said accel_z.w1 at 0.68,
   dvl_z.acf at 0.92. The margin construction is lenient (n = 6 leave-one-out), and
   the tub floors and datum were calibrated on the same bags that are scored. Say so.
 - v19 re-check (2026-11-13): with the DVL payload and the measured 12.7 degree trim in

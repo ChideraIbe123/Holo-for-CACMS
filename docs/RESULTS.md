@@ -3,9 +3,9 @@
 Everything found so far, in one place. The pre-registration (`preregistration.md`) is
 the binding record of what was predicted and when; this file is the record of what
 came out. `PAPER_BRIEF.md` is the writer's guide and has the detail and the sources.
-Raw per-run logs and the frozen simulator predictions are under `data/` (if that
-directory is not yet present, the copy from the lab server is pending; the runs also
-live in the lab's Box archive under the session folder names given below).
+Raw per-run logs and the frozen simulator predictions are under `data/` (see
+`data/README.md`; the full recordings with rosbags remain in the lab archive under
+the session folder names given below).
 
 ## 1. Headline
 
@@ -30,7 +30,7 @@ spread of the lab's own recordings with a conformal leave-one-out margin (alpha 
 | v18 + measured tub floors, measured depth datum (-0.0326 m), 1.25 s accel low-pass | 41/41 in every seed |
 | v19 (DVL payload + measured 12.7 deg nose-down trim), same configuration | 41/41 in every seed (MWU 40/40/41/41) |
 
-Tightest margins: `accel_z.w1` at 0.68 of its margin, `dvl_z.acf` at 0.92. The margin
+Tightest margins (v19 pooled card): `dvl_z.acf` at 0.89 and `accel_z.acf` at 0.88 of their margins, worst single seed 0.95 (`accel_z.acf`); physics-only fails `accel_x.w1` at 1.34. The margin
 construction is lenient (n = 6 leave-one-out) and the tub floors and datum were
 calibrated on the bags that are scored; both are stated as limitations.
 
